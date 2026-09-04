@@ -100,7 +100,7 @@ jobs:
           RUNTIME_OUTPUT="$RUNNER_TEMP/ulanzi-runtime"
           PACKAGE_OUTPUT="$RUNNER_TEMP/ulanzi-package"
           mkdir -p "$BUILD_ROOT" "$RUNTIME_OUTPUT" "$PACKAGE_OUTPUT"
-          packaging/build_ulanzi_runtime_macos.sh "$BUILD_ROOT" "$RUNTIME_OUTPUT"
+          sh packaging/build_ulanzi_runtime_macos.sh "$BUILD_ROOT" "$RUNTIME_OUTPUT"
           python3.13 -I -s packaging/prepare_ulanzi_spike.py \
             --runtime-bundle "$RUNTIME_OUTPUT/runtime" \
             --output-root "$PACKAGE_OUTPUT"
