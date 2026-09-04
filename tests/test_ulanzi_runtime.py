@@ -464,16 +464,17 @@ class UlanziRuntimeTests(unittest.TestCase):
                 "context": "progress",
             })
             self.assertTrue(api.send_entered.wait(1))
+            runtime.request_stop("blocked")
+            self.assertTrue(self._wait_for(lambda: runtime.cleanup_state is not None))
+            published_failure = runtime.cleanup_state
+            self.assertEqual(published_failure, self.runtime_module.ShutdownResult(
+                False, False, "progress_worker_alive"))
+            self.assertTrue(runtime.progress_scheduler.worker_alive)
+            self.assertEqual((router.stop_calls, api.close_calls), (0, 0))
             results = []
             callers = [threading.Thread(target=lambda: results.append(runtime.stop("blocked")))
                        for _ in range(2)]
-            callers[0].start()
-            self.assertTrue(self._wait_for(lambda: runtime.cleanup_state is not None))
-            published_failure = runtime.cleanup_state
-            self.assertTrue(runtime.progress_scheduler.worker_alive)
-            self.assertEqual(published_failure.reason, "progress_worker_alive")
-            self.assertEqual((router.stop_calls, api.close_calls), (0, 0))
-            callers[1].start()
+            for caller in callers: caller.start()
             for caller in callers: caller.join(1)
             self.assertFalse(any(caller.is_alive() for caller in callers))
             self.assertEqual(len(results), 2)
