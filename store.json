@@ -1,4 +1,8 @@
 {
+  "cover": "assets/cover.jpeg",
+  "screenshots": [
+    "assets/banner.jpeg"
+  ],
   "longDescription": "Media Control for D200 is a macOS-only local companion for Ulanzi D200. It shows generic current-media artwork, title, artist, and progress; provides transport controls; controls macOS output volume and mute; and includes a four-key artwork mosaic. Ulanzi Studio automatically starts the bundled local D200 bridge when needed. Everything runs on the same Mac through a loopback bridge with no cloud service or account. Current-media data uses private macOS MediaRemote APIs. Package, Ulanzi Studio, and D200 acceptance remains unvalidated; this metadata does not claim signing, notarization, marketplace availability, or device compatibility.",
   "deviceTypes": [
     "deck"
