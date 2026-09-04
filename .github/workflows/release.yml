@@ -16,12 +16,12 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           persist-credentials: false
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: pip
@@ -31,7 +31,7 @@ jobs:
             packaging/requirements-ulanzi-runtime.lock
 
       - name: Set up Node.js 20.12.2
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "20.12.2"
           cache: npm
@@ -88,7 +88,7 @@ jobs:
         working-directory: com.arkamax404.mediacontrold200.ulanziPlugin
 
       - name: Set up Python 3.13 for packaging
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.13"
 
