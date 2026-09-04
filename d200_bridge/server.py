@@ -39,6 +39,8 @@ def create_server(
     class BridgeHandler(BaseHTTPRequestHandler):
         def do_GET(self):
             if self.path == "/health":
+                if not self._authorized():
+                    return
                 self._json(200, lifecycle.health(), max_bytes=512)
                 return
             if self._protected() and not self._authorized():
@@ -56,6 +58,8 @@ def create_server(
             if self._protected() and not self._authorized():
                 return
             if self.path == "/lifecycle/stop":
+                if not self._instance_matches():
+                    return
                 lifecycle.set_status("stopping")
                 if request_stop is not None:
                     request_stop()

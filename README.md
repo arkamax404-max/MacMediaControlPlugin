@@ -4,16 +4,23 @@ Media Control for D200 is a macOS-only, local companion and Ulanzi Studio plugin
 
 > **Validation status:** the implementation uses macOS MediaRemote for current-media data. MediaRemote is a private macOS framework, so compatibility is not guaranteed by Apple. Local runtime, package, Ulanzi Studio, and D200 validation is still pending. This repository makes no signing, notarization, release, or marketplace availability claim.
 
-## Requirements
+## Released package setup
+
+- macOS 13 or later
+- Ulanzi Studio 2.1.4 or later
+- Ulanzi D200
+
+Import the released package into Ulanzi Studio and assign actions from **Media Control for D200**. When an action needs current-media data, Ulanzi Studio starts the package's bundled local D200 bridge automatically. The bridge and plugin run on the same Mac; bridge traffic stays on `127.0.0.1`.
+
+## Source and build prerequisites
 
 - macOS 13 or later
 - Python 3.11 or later
 - Node.js 20.12.2 or later for source development
-- Ulanzi Studio 2.1.4 or later and a D200 for eventual device use
 
-The bridge and plugin run on the same Mac. The plugin needs the local bridge to show current media; until then, keys show their offline or setup fallback.
+The macOS production package build additionally requires Python 3.13 and Xcode command-line tools. Package preparation is described in [packaging/README.md](packaging/README.md).
 
-## Quick path
+## Source development quick path
 
 1. Install Python dependencies and the plugin development dependencies:
 
@@ -22,15 +29,15 @@ The bridge and plugin run on the same Mac. The plugin needs the local bridge to 
    (cd com.arkamax404.mediacontrold200.ulanziPlugin && npm ci)
    ```
 
-2. Start the bridge manually when you are ready to use it:
+2. Start the source bridge manually when you need to exercise it:
 
    ```sh
    python3 -m d200_bridge
    ```
 
-3. Import the prepared plugin folder into Ulanzi Studio, assign actions from **Media Control for D200**, and keep the bridge running. Package preparation is described in [packaging/README.md](packaging/README.md).
+3. For a packaged build, follow [packaging/README.md](packaging/README.md). The packaged launcher starts its bundled bridge automatically when needed.
 
-The bridge stores its token at `~/Library/Application Support/GSMTCD200Controller/bridge-token`, listens only on `http://127.0.0.1:43821`, and supports `python3 -m d200_bridge --stop` and `python3 -m d200_bridge --diagnose`.
+The bridge stores its token at `~/Library/Application Support/GSMTCD200Controller/bridge-token`, listens only on `http://127.0.0.1:43821`, and supports `python3 -m d200_bridge --diagnose`.
 
 ## Actions
 

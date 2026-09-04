@@ -11,6 +11,7 @@ PROGRESS_MODES = ("remaining", "elapsed", "total")
 STATUS_LABELS = {
     "configuration": "Companion setup required",
     "incompatible": "Incompatible companion",
+    "companion_start_failed": "Companion unavailable",
     "offline": "Offline",
     "no_timeline": "No timeline",
 }
@@ -31,7 +32,7 @@ class ProgressState:
 
 
 def unavailable_progress_state(reason: str = "unavailable") -> ProgressState:
-    status = reason if reason in ("configuration", "incompatible") else "offline"
+    status = reason if reason in ("configuration", "incompatible", "companion_start_failed") else "offline"
     return ProgressState(False, False, False, False, 0.0, 0.0, 1.0, None,
                          status, STATUS_LABELS[status])
 

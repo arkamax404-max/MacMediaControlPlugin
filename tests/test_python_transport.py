@@ -31,7 +31,9 @@ from transport_actions import (  # noqa: E402
 from transport_diagnostics import (  # noqa: E402
     MAX_COUNTER,
     CategoryCounterFile,
+    CompanionStartupDiagnosticFile,
     TransportDiagnostics,
+    companion_startup_diagnostic_path,
     result_class,
     transport_diagnostic_path,
 )
@@ -109,6 +111,68 @@ class PythonTransportTests(unittest.TestCase):
             transport_diagnostic_path("relative-home")
         with self.assertRaises(ValueError):
             CategoryCounterFile("relative-counters.json")
+
+    def test_companion_startup_diagnostic_persists_only_safe_fields_with_secure_permissions(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            home = Path(temporary)
+            path = companion_startup_diagnostic_path(home)
+            CompanionStartupDiagnosticFile(home=home).write("exited", 1, "redacted")
+            self.assertEqual(json.loads(path.read_text(encoding="ascii")), {
+                "exit_code": 1,
+                "stage": "exited",
+                "stderr_category": "redacted",
+            })
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+            self.assertEqual(stat.S_IMODE(path.parent.stat().st_mode), 0o700)
+            content = path.read_text(encoding="ascii")
+            for forbidden in ("Bearer", "private-token", "Users", "mp3", "artwork", "host-arg"):
+                self.assertNotIn(forbidden, content)
+
+    def test_companion_startup_diagnostic_rejects_unsafe_data_and_symlinks(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / "diagnostics" / "companion-startup.json"
+            diagnostic = CompanionStartupDiagnosticFile(path)
+            for arguments in (
+                ("/Users/example", 1, "redacted"),
+                ("exited", 256, "redacted"),
+                ("exited", 1, "SECRET /Users/example/private.mp3"),
+            ):
+                with self.subTest(arguments=arguments):
+                    with self.assertRaises(ValueError):
+                        diagnostic.write(*arguments)
+
+            target = root / "target"
+            target.mkdir()
+            unsafe = root / "Library"
+            unsafe.symlink_to(target, target_is_directory=True)
+            with self.assertRaises(OSError):
+                CompanionStartupDiagnosticFile(unsafe / "Logs" / "companion-startup.json").write(
+                    "spawned", None, "none")
+
+            path.parent.mkdir()
+            path.symlink_to(target / "outside")
+            with self.assertRaises(OSError):
+                diagnostic.write("exited", 1, "redacted")
+            self.assertFalse((target / "outside").exists())
+
+    def test_companion_startup_diagnostic_overwrites_atomically_and_keeps_previous_on_replace_failure(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "diagnostics" / "companion-startup.json"
+            diagnostic = CompanionStartupDiagnosticFile(path)
+            diagnostic.write("spawned", None, "none")
+            diagnostic.write("exited", 1, "startup_failed")
+            self.assertEqual(json.loads(path.read_text(encoding="ascii")), {
+                "exit_code": 1,
+                "stage": "exited",
+                "stderr_category": "startup_failed",
+            })
+            previous = path.read_text(encoding="ascii")
+            with mock.patch("transport_diagnostics.os.replace", side_effect=OSError("blocked")):
+                with self.assertRaises(OSError):
+                    diagnostic.write("health-timeout", None, "redacted")
+            self.assertEqual(path.read_text(encoding="ascii"), previous)
+            self.assertEqual(list(path.parent.glob("*.tmp")), [])
 
     def test_transport_diagnostics_persist_atomic_category_counters_only(self):
         with tempfile.TemporaryDirectory() as temporary:

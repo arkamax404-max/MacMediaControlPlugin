@@ -4,7 +4,7 @@ This is a macOS-only project. Read the [README](README.md) for the product bound
 
 ## Setup
 
-Use macOS 13 or later, Python 3.11 or later, and Node.js 20.12.2 or later.
+Source development and tests require macOS 13 or later, Python 3.11 or later, and Node.js 20.12.2 or later. The macOS production packager requires Python 3.13 and Xcode command-line tools.
 
 ```sh
 python3 -m pip install -r requirements.txt

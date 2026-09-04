@@ -12,7 +12,7 @@ cpython_license = root / "packaging" / "licenses" / "cpython" / "LICENSE.txt"
 mediaremote_helper = Path(os.environ["MEDIAREMOTE_HELPER"])
 if mediaremote_helper.name != "MediaRemoteHelper" or not mediaremote_helper.is_file():
     raise RuntimeError("MediaRemote helper build artifact is missing")
-hiddenimports = collect_submodules("ulanzi_api") + ["websocket"]
+hiddenimports = collect_submodules("ulanzi_api") + collect_submodules("d200_bridge") + ["websocket", "PIL"]
 
 
 def distribution_file(name, suffix):
@@ -45,7 +45,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["tests", "test", "websocket.tests", "PIL"],
+    excludes=["tests", "test", "websocket.tests"],
     noarchive=False,
     optimize=0,
 )

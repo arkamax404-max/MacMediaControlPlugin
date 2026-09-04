@@ -46,6 +46,13 @@ def add_pyinstaller_macos_python_symlinks(root, name="Python3", version="3.9"):
     os.symlink(f"{name}.framework/Versions/{version}/{name}", root / "_internal" / name)
 
 
+def add_pyinstaller_macos_dylib_alias(root, name="libXau.6.dylib", target="PIL/.dylibs/libXau.6.dylib"):
+    library = root / "_internal" / target
+    library.parent.mkdir(parents=True, exist_ok=True)
+    library.write_bytes(b"dylib")
+    os.symlink(target, root / "_internal" / name)
+
+
 class PackagingContractTests(unittest.TestCase):
     def test_macos_build_contract_uses_extensionless_launcher_runtime(self):
         build = (PACKAGING / "build_ulanzi_runtime_macos.sh").read_text("utf-8")
@@ -56,8 +63,16 @@ class PackagingContractTests(unittest.TestCase):
 
         self.assertIn("Darwin", build)
         self.assertIn("--require-hashes", build)
+        self.assertIn('python3.13 -I -s -m venv "$1/venv"', build)
+        self.assertIn('PYTHON="$1/venv/bin/python"', build)
+        self.assertIn('"$PYTHON" -I -s -m pip install --require-hashes', build)
+        self.assertIn('"$PYTHON" -I -s -m PyInstaller --noconfirm --clean', build)
+        self.assertNotIn('python3 -I -s -m pip install', build)
         self.assertIn("--workpath \"$1/pyinstaller\" --distpath \"$2\"", build)
         self.assertIn('name="MediaControlRuntime"', spec)
+        self.assertIn('collect_submodules("d200_bridge")', spec)
+        self.assertIn('"PIL"', spec)
+        self.assertNotIn('"PIL"],', spec)
         self.assertIn('name="runtime"', spec)
         self.assertIn('MEDIAREMOTE_HELPER', build)
         self.assertIn('build_mediaremote_helper.py', build)
@@ -69,6 +84,18 @@ class PackagingContractTests(unittest.TestCase):
         self.assertNotIn("MediaControlRuntime.exe", launcher)
         for forbidden in ("pefile", "pywin32", "winrt", "pycaw"):
             self.assertNotIn(forbidden, lock.lower())
+        self.assertIn("Pillow==", lock)
+
+    def test_companion_import_graph_has_hashed_runtime_and_bundle_contracts(self):
+        artwork = (ROOT / "d200_bridge" / "artwork.py").read_text("utf-8")
+        spec = (PACKAGING / "ulanzi_runtime.spec").read_text("utf-8")
+        lock = (PACKAGING / "requirements-ulanzi-runtime.lock").read_text("utf-8")
+
+        self.assertIn("from PIL import Image, ImageOps", artwork)
+        self.assertRegex(lock, r"(?m)^Pillow==[^\s]+(?:\s+--hash=sha256:[0-9a-f]{64})+$")
+        self.assertIn('collect_submodules("d200_bridge")', spec)
+        self.assertIn('"PIL"', spec)
+        self.assertNotRegex(spec, r"excludes\s*=\s*\[[^]]*['\"]PIL['\"]")
 
     def test_mediaremote_helper_builder_uses_fixed_native_inputs(self):
         path = PACKAGING / "build_mediaremote_helper.py"
@@ -207,6 +234,40 @@ class PackagingContractTests(unittest.TestCase):
             os.symlink("Python.framework/Versions/3.13/Python.exe", runtime / "_internal" / "Python")
             with self.assertRaisesRegex(ValueError, "unexpected target"):
                 preparer.validate_runtime_bundle(runtime)
+
+    def test_runtime_inventory_allows_contained_pyinstaller_dylib_aliases(self):
+        preparer = load_preparer()
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = Path(directory)
+            create_runtime(runtime, preparer)
+            add_pyinstaller_macos_dylib_alias(runtime)
+            self.assertIn(
+                "_internal/PIL/.dylibs/libXau.6.dylib",
+                preparer.validate_runtime_bundle(runtime),
+            )
+
+    def test_runtime_inventory_rejects_unsafe_pyinstaller_dylib_aliases(self):
+        preparer = load_preparer()
+        cases = (
+            ("libXau.6.dylib", "/tmp/libXau.6.dylib", None),
+            ("libXau.6.dylib", "../../outside", b"outside"),
+            ("libXau.6.dylib", "PIL/.dylibs/missing.dylib", None),
+            ("libXau.6.dylib", "PIL/.dylibs", "directory"),
+            ("unexpected-link", "PIL/.dylibs/libXau.6.dylib", b"dylib"),
+        )
+        for name, target, content in cases:
+            with self.subTest(name=name, target=target), tempfile.TemporaryDirectory() as directory:
+                runtime = Path(directory)
+                create_runtime(runtime, preparer)
+                if content == "directory":
+                    (runtime / "_internal" / target).mkdir(parents=True)
+                elif content is not None:
+                    library = runtime / "_internal" / target
+                    library.parent.mkdir(parents=True, exist_ok=True)
+                    library.write_bytes(content)
+                os.symlink(target, runtime / "_internal" / name)
+                with self.assertRaisesRegex(ValueError, "symbolic link|escapes the runtime root"):
+                    preparer.validate_runtime_bundle(runtime)
 
     def test_projection_preserves_manifest_actions_assets_and_inspector(self):
         preparer = load_preparer()

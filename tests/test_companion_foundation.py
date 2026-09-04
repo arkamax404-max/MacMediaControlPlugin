@@ -180,6 +180,30 @@ class FoundationTests(unittest.TestCase):
             else:
                 mutex.close.assert_called_once_with()
             run.assert_not_called()
+    def test_startup_failure_marker_is_fixed_and_categorized(self):
+        self.assertEqual(
+            bridge_main.startup_failure_marker(ModuleNotFoundError("synthetic")),
+            "companion_start_failed category=missing_module",
+        )
+        self.assertEqual(
+            bridge_main.startup_failure_marker(RuntimeError("synthetic /private/token")),
+            "companion_start_failed category=initialization_failure",
+        )
+    def test_preflight_loads_dependencies_without_starting_runtime_services(self):
+        with patch.object(bridge_main, "load_bridge_dependencies") as load, \
+             patch.object(bridge_main.asyncio, "run") as run, \
+             patch("builtins.print") as output:
+            self.assertEqual(bridge_main.main(["--preflight"]), 0)
+        load.assert_called_once_with()
+        run.assert_not_called()
+        output.assert_called_once_with("companion_preflight_ready")
+    def test_preflight_reports_safe_missing_module_marker(self):
+        with patch.object(bridge_main, "load_bridge_dependencies", side_effect=ModuleNotFoundError("PIL")), \
+             patch("builtins.print") as output:
+            self.assertEqual(bridge_main.main(["--preflight"]), 1)
+        output.assert_called_once_with(
+            "companion_start_failed category=missing_module", file=__import__("sys").stderr,
+        )
 class ServerSecurityTests(unittest.TestCase):
     def setUp(self):
         self.loop = asyncio.new_event_loop()
@@ -208,7 +232,7 @@ class ServerSecurityTests(unittest.TestCase):
         response = connection.getresponse(); result = response.status, json.loads(response.read())
         connection.close(); return result
     def test_health_and_strict_generic_authorization_matrix(self):
-        with self.request("/health") as response:
+        with self.request("/health", authorization=f"Bearer {TOKEN}") as response:
             self.assertEqual(json.load(response)["service"], "d200-gsmtc-bridge")
         invalid = (None, "", "Basic abc", "bearer " + TOKEN, "Bearer wrong", "Bearer",
                    "Bearer  " + TOKEN, "Bearer\t" + TOKEN, "Bearer " + TOKEN + " ",
@@ -220,7 +244,7 @@ class ServerSecurityTests(unittest.TestCase):
             self.assertEqual(json.load(error.exception), {"error": "unauthorized"})
             error.exception.close()
         self.assertEqual(self.raw_command([f"Bearer {TOKEN}"] * 2), (403, {"error": "unauthorized"}))
-        for path, method in (("/state", "GET"), ("/artwork/" + "a" * 64, "GET"), ("/lifecycle/stop", "POST"), ("/command/unknown", "POST")):
+        for path, method in (("/health", "GET"), ("/state", "GET"), ("/artwork/" + "a" * 64, "GET"), ("/lifecycle/stop", "POST"), ("/command/unknown", "POST")):
             with self.assertRaises(HTTPError) as error: self.request(path, method)
             error.exception.close()
         self.assertEqual(self.commands, []); self.artwork_lookup.assert_not_called()
@@ -232,6 +256,19 @@ class ServerSecurityTests(unittest.TestCase):
         self.assertEqual(self.commands, [])
     def test_exact_auth_stop_order_and_command_refusal(self):
         self.assertEqual(self.raw_command([f"Bearer {TOKEN}"]), (200, {"ok": True}))
+        for instance in (None, "wrong", "123e4567-e89b-42d3-a456-426614174000"):
+            headers = {"Authorization": f"Bearer {TOKEN}"}
+            if instance is not None:
+                headers["X-Companion-Instance"] = instance
+            request = Request(self.origin + "/lifecycle/stop", data=b"{}", method="POST",
+                              headers=headers)
+            with self.assertRaises(HTTPError) as error:
+                urlopen(request, timeout=2)
+            self.assertEqual(error.exception.code, 409)
+            self.assertEqual(json.load(error.exception), {"error": "companion_mismatch"})
+            error.exception.close()
+        self.assertNotEqual(self.lifecycle.status, "stopping")
+        self.request_stop.assert_not_called()
         original = self.server.RequestHandlerClass._json; self.server.handle_error = Mock()
         def broken_write(handler, status, payload, **kwargs):
             if payload == {"ok": True}: raise BrokenPipeError("disconnected")
@@ -244,14 +281,6 @@ class ServerSecurityTests(unittest.TestCase):
             self.request("/command/next", "POST", f"Bearer {TOKEN}")
         self.assertEqual(error.exception.code, 503); error.exception.close()
 class CliStopTests(unittest.TestCase):
-    def test_cli_stop_is_bounded_loopback_and_does_not_disclose_token(self):
-        response = MagicMock(status=200); response.__enter__.return_value = response
-        with patch.object(bridge_main, "load_token", return_value=TOKEN), patch.object(
-            bridge_main, "urlopen", return_value=response
-        ) as send:
-            self.assertEqual(bridge_main.main(["--stop"]), 0)
-        request = send.call_args.args[0]
-        self.assertEqual(request.full_url, "http://127.0.0.1:43821/lifecycle/stop")
-        self.assertEqual(request.get_header("Authorization"), f"Bearer {TOKEN}")
-        self.assertEqual(send.call_args.kwargs["timeout"], 2)
+    def test_cli_refuses_global_stop_mode(self):
+        self.assertEqual(bridge_main.main(["--stop"]), 2)
 if __name__ == "__main__": unittest.main()

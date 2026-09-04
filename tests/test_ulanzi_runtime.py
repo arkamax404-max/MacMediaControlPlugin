@@ -6,6 +6,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 
 ROOT = Path(__file__).parents[1]
@@ -83,6 +84,11 @@ class UlanziRuntimeTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.runtime_module = load_runtime_module()
+        class NoopSupervisor:
+            def __init__(self, *_args, **_kwargs): pass
+            def ensure_ready(self): return type("Result", (), {"ready": True})()
+            def shutdown(self): pass
+        cls.runtime_module.CompanionSupervisor = NoopSupervisor
 
     def test_parses_host_arguments_and_preserves_future_values_exactly(self):
         raw = ["localhost", "4567", "es-ES", "--future=value with spaces", 'quoted"value']
@@ -105,6 +111,27 @@ class UlanziRuntimeTests(unittest.TestCase):
         parsed = self.runtime_module.parse_host_arguments(["10.0.0.2"])
         self.assertEqual((parsed.address, parsed.port, parsed.language), ("10.0.0.2", "3906", "en"))
         self.assertEqual(parsed.raw, ("10.0.0.2",))
+
+    def test_reserved_bridge_mode_dispatches_without_starting_plugin_runtime(self):
+        with patch("d200_bridge.__main__.main", return_value=7) as bridge_main:
+            self.assertEqual(self.runtime_module.main(["--d200-bridge"]), 7)
+        bridge_main.assert_called_once_with([])
+
+    def test_reserved_bridge_preflight_dispatches_without_starting_plugin_runtime(self):
+        with patch("d200_bridge.__main__.main", return_value=0) as bridge_main:
+            self.assertEqual(self.runtime_module.main(["--d200-bridge", "--preflight"]), 0)
+        bridge_main.assert_called_once_with(["--preflight"])
+
+    def test_runtime_starts_and_stops_the_injected_companion_supervisor_once(self):
+        api = FakeApi()
+        supervisor = Mock()
+        supervisor.ensure_ready.return_value = type("Result", (), {"ready": True})()
+        runtime = self.runtime_module.Runtime(
+            lambda: api, companion_supervisor_factory=lambda _client: supervisor,
+        )
+        self.assertEqual(runtime.run(self.runtime_module.parse_host_arguments([]), io.StringIO("")), 0)
+        supervisor.ensure_ready.assert_called_once_with()
+        supervisor.shutdown.assert_called_once_with()
 
     def test_websocket_close_stops_runtime_once(self):
         api = FakeApi()

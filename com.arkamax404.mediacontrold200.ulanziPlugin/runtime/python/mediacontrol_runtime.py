@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Callable, Sequence, TextIO
 
 from bridge_client import BridgeClient, bridge_origin_from_future
+from companion_supervisor import CompanionSupervisor
 from artwork_bundle import ArtworkBundleCache
 from now_playing_action import NowPlayingActionModel
 from progress_action import ProgressActionModel
@@ -77,6 +78,7 @@ class Runtime:
         now_playing_model_factory: Callable[[], NowPlayingActionModel] = NowPlayingActionModel,
         artwork_cache_factory: Callable[[], ArtworkBundleCache] = ArtworkBundleCache,
         progress_scheduler_factory: Callable[..., ProgressScheduler] = ProgressScheduler,
+        companion_supervisor_factory: Callable[[BridgeClient], CompanionSupervisor] | None = None,
     ) -> None:
         self._api_factory = api_factory
         self._api = None
@@ -104,14 +106,27 @@ class Runtime:
         self._artwork_cache_factory = artwork_cache_factory
         self._progress_scheduler_factory = progress_scheduler_factory
         self._router_factory = router_factory or self._create_router
+        self._companion_supervisor_factory = companion_supervisor_factory or (
+            lambda client: CompanionSupervisor(client_factory=lambda: client)
+        )
+        self._companion_supervisor: CompanionSupervisor | None = None
 
     @staticmethod
     def _create_router(arguments: HostArguments) -> TransportRouter:
         diagnostics = TransportDiagnostics(counter_file=CategoryCounterFile())
-        return TransportRouter(
-            BridgeClient(origin=bridge_origin_from_future(arguments.future), diagnostics=diagnostics),
-            diagnostics=diagnostics,
-        )
+        return TransportRouter(BridgeClient(origin=bridge_origin_from_future(arguments.future), diagnostics=diagnostics), diagnostics=diagnostics)
+
+    def _ensure_companion(self) -> None:
+        if self.router is not None:
+            return
+        router = self._router_factory(self._arguments)
+        client = getattr(router, "client", None)
+        if isinstance(client, BridgeClient):
+            supervisor = self._companion_supervisor_factory(client)
+            self._companion_supervisor = supervisor
+            if not supervisor.ensure_ready().ready:
+                client.mark_startup_failure()
+        self.router = router
 
     @property
     def stopped(self) -> bool:
@@ -220,6 +235,8 @@ class Runtime:
                     failure = failure or "worker_alive"
             except Exception:
                 failure = failure or "router_stop_failed"
+        if self._companion_supervisor is not None:
+            self._companion_supervisor.shutdown()
         if api is not None:
             try:
                 if not self._close_api_once(api):
@@ -263,11 +280,12 @@ class Runtime:
             return 0 if result.success else 1
 
         setup_failure = None
+        self._arguments = arguments
         try:
             api = self._api_factory()
             self._api = api
             if not self._stop_requested.is_set() and self.router is None:
-                self.router = self._router_factory(arguments)
+                self._ensure_companion()
             if not self._stop_requested.is_set() and self.router is not None:
                 self.router.start()
             if not self._stop_requested.is_set():
@@ -307,6 +325,10 @@ class Runtime:
 
 
 def main(argv: Sequence[str] | None = None, stdin: TextIO = sys.stdin) -> int:
+    arguments = sys.argv[1:] if argv is None else argv
+    if arguments in (["--d200-bridge"], ["--d200-bridge", "--preflight"]):
+        from d200_bridge.__main__ import main as bridge_main
+        return bridge_main(arguments[1:])
     configure_transport_diagnostics_logging()
     runtime = Runtime()
 
@@ -315,7 +337,7 @@ def main(argv: Sequence[str] | None = None, stdin: TextIO = sys.stdin) -> int:
 
     signal.signal(signal.SIGINT, stop_from_signal)
     signal.signal(signal.SIGTERM, stop_from_signal)
-    return runtime.run(parse_host_arguments(sys.argv[1:] if argv is None else argv), stdin)
+    return runtime.run(parse_host_arguments(arguments), stdin)
 
 
 if __name__ == "__main__":

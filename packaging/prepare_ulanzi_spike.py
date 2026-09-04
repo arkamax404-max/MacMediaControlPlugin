@@ -39,7 +39,7 @@ RUNTIME_ROOT_ENTRIES = frozenset(("MediaControlRuntime", "MediaRemoteHelper", "_
 WINDOWS_RUNTIME_SUFFIXES = (".exe", ".dll", ".pyd")
 # PyInstaller's macOS framework payload requires one of these closed, relative
 # symlink sets. Python 3.9 names its framework and executable Python3; Python
-# 3.13 names both Python. No other runtime symlinks are permitted.
+# 3.13 names both Python. Internal lib*.dylib aliases are validated separately.
 PYINSTALLER_MACOS_PYTHON_SYMLINKS = {
     "_internal/Python3": ("Python3.framework/Versions/3.9/Python3", True),
     "_internal/Python3.framework/Python3": ("Versions/Current/Python3", True),
@@ -80,18 +80,27 @@ def exact_source_path(root, reference, prefix):
 
 def validate_runtime_symlink(root, candidate, relative):
     expected = PYINSTALLER_MACOS_PYTHON_SYMLINKS.get(relative)
-    if expected is None:
-        raise ValueError(f"Inventory contains a symbolic link: {relative}")
-    target, expects_file = expected
-    if candidate.readlink().as_posix() != target:
-        raise ValueError(f"PyInstaller symbolic link has an unexpected target: {relative}")
+    containment_root = root
+    if expected is not None:
+        target, expects_file = expected
+        if candidate.readlink().as_posix() != target:
+            raise ValueError(f"PyInstaller symbolic link has an unexpected target: {relative}")
+    else:
+        path = PurePosixPath(relative)
+        target = candidate.readlink()
+        if (path.parent.as_posix() != "_internal" or not path.name.startswith("lib")
+                or not path.name.endswith(".dylib") or target.is_absolute()
+                or ".." in target.parts):
+            raise ValueError(f"Inventory contains a symbolic link: {relative}")
+        expects_file = True
+        containment_root = root / "_internal"
     try:
         resolved = candidate.resolve(strict=True)
     except (OSError, RuntimeError) as error:
         raise ValueError(f"PyInstaller symbolic link is broken: {relative}") from error
-    if not is_within(resolved, root):
+    if not is_within(resolved, containment_root):
         raise ValueError("PyInstaller symbolic link escapes the runtime root")
-    if expects_file and not resolved.is_file():
+    if expects_file and not stat.S_ISREG(resolved.stat().st_mode):
         raise ValueError(f"PyInstaller symbolic link must resolve to a file: {relative}")
     if not expects_file and not resolved.is_dir():
         raise ValueError(f"PyInstaller symbolic link must resolve to a directory: {relative}")

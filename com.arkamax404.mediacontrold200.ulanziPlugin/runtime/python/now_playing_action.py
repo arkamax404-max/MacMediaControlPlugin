@@ -54,6 +54,7 @@ JS_TRIM_CHARACTERS = frozenset(
 STATUS_LABELS = {
     "configuration": "Companion setup required",
     "incompatible": "Incompatible companion",
+    "companion_start_failed": "Companion unavailable",
     "offline": "Offline",
     "no_session": "Offline",
 }

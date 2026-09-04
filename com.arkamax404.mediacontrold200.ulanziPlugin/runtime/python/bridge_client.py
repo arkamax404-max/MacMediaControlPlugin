@@ -85,6 +85,12 @@ class BridgeArtworkResult:
         return self.status == "ok"
 
 
+@dataclass(frozen=True)
+class BridgeHealthResult:
+    status: str
+    instance_id: str | None = None
+
+
 class BridgeClient:
     def __init__(
         self,
@@ -117,6 +123,34 @@ class BridgeClient:
         self._request_available = threading.Event()
         self._request_available.set()
         self._request_active = False
+        self._startup_failure = False
+
+    def mark_startup_failure(self) -> None:
+        self._startup_failure = True
+
+    def probe_health(self) -> BridgeHealthResult:
+        status, _token, instance_id, _status_code = self._compatibility(ignore_startup_failure=True)
+        return BridgeHealthResult(status, instance_id)
+
+    def stop_owned(self, instance_id: str) -> bool:
+        if not isinstance(instance_id, str) or not INSTANCE_ID_PATTERN.fullmatch(instance_id):
+            return False
+        compatibility, token, current_id, _status_code = self._compatibility()
+        if compatibility != "compatible" or current_id != instance_id:
+            return False
+        request = Request(self.origin + "/lifecycle/stop", data=b"{}", method="POST", headers={
+            "Authorization": f"Bearer {token}", "Content-Type": "application/json",
+            "X-Companion-Instance": instance_id,
+        })
+        try:
+            with self._opener(request, timeout=self.timeout) as response:
+                response.read(1025)
+                return 200 <= response.status < 300
+        except HTTPError as error:
+            error.close()
+        except Exception:
+            pass
+        return False
 
     def execute(self, command: str, cancelled: Callable[[], bool] | None = None) -> BridgeResult:
         if not self._claim_request(cancelled):
@@ -255,7 +289,9 @@ class BridgeClient:
             self._request_active = False
             self._request_available.set()
 
-    def _compatibility(self) -> tuple[str, str | None, str | None, int | None]:
+    def _compatibility(self, ignore_startup_failure: bool = False) -> tuple[str, str | None, str | None, int | None]:
+        if self._startup_failure and not ignore_startup_failure:
+            return "companion_start_failed", None, None, None
         try:
             token = validate_token(self._token_loader())
         except Exception:

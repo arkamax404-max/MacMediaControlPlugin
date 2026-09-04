@@ -16,6 +16,9 @@ PHYSICAL_TRANSPORT_EVENTS = frozenset(("previous", "toggle", "next"))
 RESULT_CLASSES = frozenset(("success", "rejected", "unavailable", "compatibility", "lifecycle"))
 PRODUCT_DIRECTORY = "GSMTCD200Controller"
 DIAGNOSTIC_FILENAME = "transport-counters.json"
+STARTUP_DIAGNOSTIC_FILENAME = "companion-startup.json"
+STARTUP_STAGES = frozenset(("spawned", "exited", "health-timeout"))
+STDERR_CATEGORIES = frozenset(("none", "startup_failed", "redacted"))
 
 
 def result_class(status: str) -> str:
@@ -39,21 +42,26 @@ def transport_diagnostic_path(home=None) -> Path:
             / DIAGNOSTIC_FILENAME)
 
 
+def companion_startup_diagnostic_path(home=None) -> Path:
+    """Return the bounded companion startup diagnostic file path."""
+    return transport_diagnostic_path(home).with_name(STARTUP_DIAGNOSTIC_FILENAME)
+
+
 def _validate_directory(path: Path) -> None:
     metadata = os.lstat(path)
     if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
         raise OSError("Unsafe diagnostics directory")
 
 
-class CategoryCounterFile:
-    """Atomically persists the fixed counter snapshot without request-derived data."""
+class _AtomicDiagnosticFile:
+    """Atomically persist a fixed, caller-validated JSON diagnostic payload."""
 
     def __init__(self, path=None, home=None) -> None:
         self.path = Path(path) if path is not None else transport_diagnostic_path(home)
         if not self.path.is_absolute():
             raise ValueError("Diagnostics path must be absolute")
 
-    def write(self, counters: dict[str, int]) -> None:
+    def _write(self, payload_data: dict) -> None:
         directory = self.path.parent
         self._ensure_directory_chain(directory)
         try:
@@ -65,7 +73,7 @@ class CategoryCounterFile:
                     or metadata.st_nlink != 1):
                 raise OSError("Unsafe diagnostics file")
 
-        payload = json.dumps(counters, sort_keys=True, separators=(",", ":")) + "\n"
+        payload = json.dumps(payload_data, sort_keys=True, separators=(",", ":")) + "\n"
         temporary = directory / f".{self.path.name}.{secrets.token_hex(8)}.tmp"
         descriptor = None
         try:
@@ -107,6 +115,35 @@ class CategoryCounterFile:
             _validate_directory(candidate)
 
 
+class CategoryCounterFile(_AtomicDiagnosticFile):
+    """Atomically persists the fixed counter snapshot without request-derived data."""
+
+    def write(self, counters: dict[str, int]) -> None:
+        self._write(counters)
+
+
+class CompanionStartupDiagnosticFile(_AtomicDiagnosticFile):
+    """Atomically persists only fixed, privacy-safe companion startup fields."""
+
+    def __init__(self, path=None, home=None) -> None:
+        super().__init__(path if path is not None else companion_startup_diagnostic_path(home))
+
+    def write(self, stage: str, exit_code: int | None, stderr_category: str) -> None:
+        if stage not in STARTUP_STAGES:
+            raise ValueError("Unsafe startup stage")
+        if (exit_code is not None and (isinstance(exit_code, bool)
+                                      or not isinstance(exit_code, int)
+                                      or not 0 <= exit_code <= 255)):
+            raise ValueError("Unsafe startup exit code")
+        if stderr_category not in STDERR_CATEGORIES:
+            raise ValueError("Unsafe stderr category")
+        self._write({
+            "exit_code": exit_code,
+            "stage": stage,
+            "stderr_category": stderr_category,
+        })
+
+
 class TransportDiagnostics:
     """Records only fixed diagnostic categories; it never accepts request data."""
 
@@ -142,11 +179,12 @@ class TransportDiagnostics:
 
 def configure_transport_diagnostics_logging() -> None:
     """Emit fixed category records to the plugin's inherited local stderr log."""
-    logger = logging.getLogger("ulanzi_transport")
-    logger.setLevel(logging.INFO)
-    logger.propagate = False
-    if logger.handlers:
-        return
-    handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter("%(levelname)s %(message)s"))
-    logger.addHandler(handler)
+    for name in ("ulanzi_transport", "ulanzi_runtime"):
+        logger = logging.getLogger(name)
+        logger.setLevel(logging.INFO)
+        logger.propagate = False
+        if logger.handlers:
+            continue
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(levelname)s %(message)s"))
+        logger.addHandler(handler)

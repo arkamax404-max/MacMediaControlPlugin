@@ -3,8 +3,6 @@ import logging
 import signal
 import sys
 import threading
-from urllib.error import URLError
-from urllib.request import Request, urlopen
 
 from .paths import CompanionPaths
 
@@ -13,6 +11,8 @@ configure_logging = ensure_token = load_token = None
 create_diagnostics = None
 create_audio_controller = None
 create_lock = None
+STARTUP_MISSING_MODULE = "companion_start_failed category=missing_module"
+STARTUP_INITIALIZATION_FAILURE = "companion_start_failed category=initialization_failure"
 
 
 def CompanionLifecycle(*args, **kwargs):
@@ -54,22 +54,7 @@ def restore_signal_handlers(previous_handlers):
 
 
 async def run_bridge(token, lifecycle=None):
-    global create_media_adapter, artwork_processor, create_server, MediaStateCache, create_audio_controller
-    if create_media_adapter is None:
-        from .media_adapter import create_media_adapter as _value
-        create_media_adapter = _value
-    if artwork_processor is None:
-        from .artwork import artwork_processor as _value
-        artwork_processor = _value
-    if create_audio_controller is None:
-        from .platform_services import create_audio_controller as _value
-        create_audio_controller = _value
-    if create_server is None:
-        from .server import create_server as _value
-        create_server = _value
-    if MediaStateCache is None:
-        from .state import MediaStateCache as _value
-        MediaStateCache = _value
+    load_bridge_dependencies()
     loop = asyncio.get_running_loop()
     lifecycle = lifecycle or CompanionLifecycle()
     stop_event = asyncio.Event()
@@ -142,28 +127,36 @@ async def run_bridge(token, lifecycle=None):
             raise cleanup_errors[0]
 
 
-def stop_running_companion():
-    global load_token
-    from . import BRIDGE_HOST, BRIDGE_PORT
-    if load_token is None:
-        from .paths import load_token as _value
-        load_token = _value
-    token = load_token()
-    request = Request(
-        f"http://{BRIDGE_HOST}:{BRIDGE_PORT}/lifecycle/stop", data=b"{}", method="POST",
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-    )
-    with urlopen(request, timeout=2) as response:
-        return 0 if response.status == 200 else 1
+def load_bridge_dependencies():
+    global create_media_adapter, artwork_processor, create_server, MediaStateCache, create_audio_controller
+    if create_media_adapter is None:
+        from .media_adapter import create_media_adapter as _value
+        create_media_adapter = _value
+    if artwork_processor is None:
+        from .artwork import artwork_processor as _value
+        artwork_processor = _value
+    if create_audio_controller is None:
+        from .platform_services import create_audio_controller as _value
+        create_audio_controller = _value
+    if create_server is None:
+        from .server import create_server as _value
+        create_server = _value
+    if MediaStateCache is None:
+        from .state import MediaStateCache as _value
+        MediaStateCache = _value
+    from .artwork import Image
+    if Image is None:
+        raise ModuleNotFoundError(name="PIL")
+
+
+def startup_failure_marker(error):
+    if isinstance(error, ModuleNotFoundError):
+        return STARTUP_MISSING_MODULE
+    return STARTUP_INITIALIZATION_FAILURE
 
 
 def main(argv=None):
     arguments = sys.argv[1:] if argv is None else argv
-    if arguments == ["--stop"]:
-        try:
-            return stop_running_companion()
-        except (OSError, RuntimeError, URLError):
-            return 1
     if arguments == ["--diagnose"]:
         global create_diagnostics
         try:
@@ -175,6 +168,14 @@ def main(argv=None):
             return 0
         except (OSError, RuntimeError, ValueError):
             print("Diagnostics could not be created")
+            return 1
+    if arguments == ["--preflight"]:
+        try:
+            load_bridge_dependencies()
+            print("companion_preflight_ready")
+            return 0
+        except Exception as error:
+            print(startup_failure_marker(error), file=sys.stderr)
             return 1
     if arguments:
         return 2
@@ -197,8 +198,8 @@ def main(argv=None):
         asyncio.run(run_bridge(token=token))
     except KeyboardInterrupt:
         return 0
-    except (OSError, RuntimeError, ValueError):
-        logging.getLogger("d200_bridge").error("startup_failed")
+    except Exception as error:
+        logging.getLogger("d200_bridge").error(startup_failure_marker(error))
         return 1
     finally:
         if mutex is not None:
