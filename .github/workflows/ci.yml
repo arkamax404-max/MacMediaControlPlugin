@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: D200 bridge and plugin / macOS
+    runs-on: macos-14
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            packaging/requirements-ulanzi-bootstrap.lock
+            packaging/requirements-ulanzi-runtime.lock
+
+      - name: Set up Node.js 20.12.2
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20.12.2"
+          cache: npm
+          cache-dependency-path: com.arkamax404.mediacontrold200.ulanziPlugin/package-lock.json
+
+      - name: Install Python dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Install pinned Ulanzi runtime dependencies
+        run: |
+          python -m pip install --require-hashes -r packaging/requirements-ulanzi-bootstrap.lock
+          python -m pip install --require-hashes --no-build-isolation -r packaging/requirements-ulanzi-runtime.lock
+
+      - name: Verify pinned Ulanzi SDK contract
+        run: python packaging/verify_ulanzi_sdk.py
+
+      - name: Install plugin dependencies
+        run: npm ci
+        working-directory: com.arkamax404.mediacontrold200.ulanziPlugin
+
+      - name: Run Python tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Run Node.js tests
+        run: npm test
+        working-directory: com.arkamax404.mediacontrold200.ulanziPlugin

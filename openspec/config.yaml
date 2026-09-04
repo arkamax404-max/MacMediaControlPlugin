@@ -1,0 +1,50 @@
+schema: spec-driven
+project: mac-media-control-plugin
+strict_tdd: true
+
+context: |
+  Stack: Python 3.11+ companion bridge plus an ESM Node.js Ulanzi Studio plugin (Node 20.12.2+).
+  Architecture: independent loopback-only companion with platform media adapters and a vendored Ulanzi SDK.
+  Current scope: macOS-only generic current-media artwork and transport with macOS output volume and mute.
+  Boundaries: no cloud service, remote bind, device discovery, or application-specific media dependency.
+  Safety: SDD initialization and routine verification must not invoke MediaRemote, D200, Studio, playback, or audio interactions.
+  Compatibility: MediaRemote is private; runtime, package, Studio, and D200 validation remain pending until separately evidenced.
+  Conventions: English technical artifacts; Python unittest and Node built-in node:test; locked Node dependencies.
+  Delivery: single PR, interactive execution, 800-line review budget; do not publish, release, push, or create remote artifacts without later explicit approval.
+
+testing:
+  strict_tdd: true
+  detected: 2026-09-03
+  commands:
+    python_unit: "python -m unittest discover -s tests -v"
+    node_unit: "(cd com.arkamax404.mediacontrold200.ulanziPlugin && npm test)"
+  notes:
+    - "Unit tests are available through Python unittest and Node built-in node:test; mocked local ephemeral HTTP-server coverage is available."
+    - "No E2E runner, coverage command, linter, type checker, or formatter is configured."
+    - "GitHub Actions runs the Python and Node suites on macOS."
+    - "Commands are capability records only; initialization did not execute tests or runtime-affecting interactions."
+
+rules:
+  proposal:
+    - Include scope, rollback, local-only boundary, and explicit runtime-safety considerations for risky changes.
+  specs:
+    - Use Given/When/Then scenarios and RFC 2119 keywords.
+    - Preserve separate media, timeline, and macOS output-audio responsibilities.
+  design:
+    - Document architecture decisions with rationale and sequence diagrams for complex flows.
+    - Preserve the independent companion direction; signing, notarization, marketplace submission, and device validation require separate evidence.
+  tasks:
+    - Group tasks by phase with hierarchical numbering and keep each task completable in one session.
+    - Keep tests and documentation with the behavior they verify.
+  apply:
+    tdd: true
+    test_command: "python -m unittest discover -s tests -v"
+    guidelines:
+      - Follow existing Python unittest, Node node:test, ESM, platform-adapter, and loopback-only patterns.
+      - Do not modify secrets, installed Ulanzi plugin files, bridge lifecycle, playback, audio, or remotes without explicit scope.
+  verify:
+    test_command: "Run both commands in testing.commands after explicit approval; do not start runtime services."
+    build_command: "Not configured; no project build script detected."
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive deltas and retain the audit trail.

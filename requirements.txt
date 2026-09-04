@@ -1,0 +1,3 @@
+# Python >=3.11 is required by the macOS bridge implementation.
+# This file is the canonical Python dependency input; it is not a resolved lock.
+Pillow>=11.0.0

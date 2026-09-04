@@ -1,0 +1,2 @@
+# Preserve byte-exact vendored SDK files and their recorded checksums.
+com.arkamax404.mediacontrold200.ulanziPlugin/vendor/ulanzi-sdk/** -text

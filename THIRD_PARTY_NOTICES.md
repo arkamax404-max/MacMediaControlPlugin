@@ -1,0 +1,53 @@
+# Third-Party Notices
+
+Media Control for D200 includes or depends on third-party components. Those components
+retain their own copyright and license terms; the root MIT License applies only
+to project-owned material.
+
+## Vendored Components
+
+| Component | Repository evidence | Local license evidence |
+|---|---|---|
+| Ulanzi `plugin-common-node` runtime files | `com.arkamax404.mediacontrold200.ulanziPlugin/vendor/ulanzi-sdk/PROVENANCE.txt` identifies commit `112bd13a7ff9d45bd68656f7e069fd61851d1812` and the three vendored files. | Apache License 2.0, preserved at `com.arkamax404.mediacontrold200.ulanziPlugin/vendor/ulanzi-sdk/LICENSE`. |
+| Ulanzi `plugin-common-html` Property Inspector files | The five files listed in `PROVENANCE.txt` are unmodified, byte-identical copies from https://github.com/UlanziTechnology/plugin-common-html at commit [`79de0b0b087546e684afd23f97223f7a7bc392da`](https://github.com/UlanziTechnology/plugin-common-html/commit/79de0b0b087546e684afd23f97223f7a7bc392da). | Apache License 2.0. The upstream root license at that revision is byte-identical to `com.arkamax404.mediacontrold200.ulanziPlugin/vendor/ulanzi-sdk/LICENSE`. The upstream tree has no `NOTICE` file at that revision, and the five files contain no additional embedded notices. |
+
+The isolated Python launcher runtime is built from Ulanzi
+`plugin-common-python` commit `9158324b777dd1f1643a0a7107528ffc506984f7`
+and `websocket-client` 1.8.0. Their source archive and wheel hashes are fixed in
+`packaging/requirements-ulanzi-runtime.lock`; neither dependency is installed
+dynamically at runtime. Both projects retain their respective license terms.
+The PyInstaller one-folder runtime bundle includes readable license texts under
+`_internal/licenses/project`, `_internal/licenses/cpython`,
+`_internal/licenses/pyinstaller`, `_internal/licenses/plugin-common-python`, and
+`_internal/licenses/websocket-client`. The temporary
+plugin-package preparer refuses a runtime bundle missing any of those files.
+
+See the vendored `PROVENANCE.txt` and `LICENSE` files for the complete local
+record. The `plugin-common-html` conclusion applies only to the five exact
+vendored files at the recorded revision.
+
+## Installed Runtime Dependencies
+
+The plugin declares `ws` version `8.21.3`. Its entry in
+`com.arkamax404.mediacontrold200.ulanziPlugin/package-lock.json` identifies its
+license as MIT. The package is installed through npm and is not vendored as
+project material.
+
+The direct Python requirement is `Pillow>=11.0.0`, as recorded in
+`requirements.txt`.
+
+The locally installed Pillow 12.2.0 distribution reports the SPDX license
+expression `MIT-CMU` in its package metadata. This establishes the local
+Pillow distribution's declared license, but not the metadata of every version
+allowed by the non-locking requirement or its optional binary codecs.
+
+`requirements.txt` contains no license field and does not lock Pillow or its
+transitive dependencies. Their complete license metadata cannot be established
+from repository files alone. Installed distributions retain their respective
+license terms.
+
+## Project Assets
+
+The repository records no external source or attribution for the SVG files
+under `com.arkamax404.mediacontrold200.ulanziPlugin/assets/`. They are distributed
+as project material under the root MIT License.
