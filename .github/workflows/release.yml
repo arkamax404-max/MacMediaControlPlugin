@@ -1,0 +1,127 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Validate, package, and publish / macOS
+    runs-on: macos-14
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            packaging/requirements-ulanzi-bootstrap.lock
+            packaging/requirements-ulanzi-runtime.lock
+
+      - name: Set up Node.js 20.12.2
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20.12.2"
+          cache: npm
+          cache-dependency-path: com.arkamax404.mediacontrold200.ulanziPlugin/package-lock.json
+
+      - name: Verify release version
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          expected = os.environ["TAG_NAME"].removeprefix("v")
+          root = Path.cwd()
+          plugin = root / "com.arkamax404.mediacontrold200.ulanziPlugin"
+          namespace = {}
+          exec((root / "d200_bridge/version.py").read_text("utf-8"), namespace)
+          versions = {
+              "manifest.json": json.loads((plugin / "manifest.json").read_text("utf-8"))["Version"],
+              "package.json": json.loads((plugin / "package.json").read_text("utf-8"))["version"],
+              "package-lock.json": json.loads((plugin / "package-lock.json").read_text("utf-8"))["version"],
+              "package-lock.json packages root": json.loads((plugin / "package-lock.json").read_text("utf-8"))["packages"][""]["version"],
+              "d200_bridge/version.py": namespace["COMPANION_VERSION"],
+          }
+          mismatches = {name: version for name, version in versions.items() if version != expected}
+          if mismatches:
+              raise SystemExit(
+                  f"Release tag v{expected} does not match version metadata: {mismatches}"
+              )
+          PY
+
+      - name: Install Python dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Install pinned Ulanzi runtime dependencies
+        run: |
+          python -m pip install --require-hashes -r packaging/requirements-ulanzi-bootstrap.lock
+          python -m pip install --require-hashes --no-build-isolation -r packaging/requirements-ulanzi-runtime.lock
+
+      - name: Verify pinned Ulanzi SDK contract
+        run: python packaging/verify_ulanzi_sdk.py
+
+      - name: Install plugin dependencies
+        run: npm ci
+        working-directory: com.arkamax404.mediacontrold200.ulanziPlugin
+
+      - name: Run Python tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Run Node.js tests
+        run: npm test
+        working-directory: com.arkamax404.mediacontrold200.ulanziPlugin
+
+      - name: Set up Python 3.13 for packaging
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Build runtime and prepare plugin
+        env:
+          PLUGIN_NAME: com.arkamax404.mediacontrold200.ulanziPlugin
+        run: |
+          BUILD_ROOT="$RUNNER_TEMP/ulanzi-build"
+          RUNTIME_OUTPUT="$RUNNER_TEMP/ulanzi-runtime"
+          PACKAGE_OUTPUT="$RUNNER_TEMP/ulanzi-package"
+          mkdir -p "$BUILD_ROOT" "$RUNTIME_OUTPUT" "$PACKAGE_OUTPUT"
+          packaging/build_ulanzi_runtime_macos.sh "$BUILD_ROOT" "$RUNTIME_OUTPUT"
+          python3.13 -I -s packaging/prepare_ulanzi_spike.py \
+            --runtime-bundle "$RUNTIME_OUTPUT/runtime" \
+            --output-root "$PACKAGE_OUTPUT"
+          ditto -c -k --sequesterRsrc --keepParent \
+            "$PACKAGE_OUTPUT/$PLUGIN_NAME" \
+            "$RUNNER_TEMP/$PLUGIN_NAME.zip"
+          (
+            cd "$RUNNER_TEMP"
+            shasum -a 256 "$PLUGIN_NAME.zip" > "$PLUGIN_NAME.zip.sha256"
+          )
+
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+          PLUGIN_NAME: com.arkamax404.mediacontrold200.ulanziPlugin
+        run: |
+          if ! gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            gh release create "$TAG_NAME" --title "$TAG_NAME" --generate-notes
+          fi
+          gh release upload "$TAG_NAME" \
+            "$RUNNER_TEMP/$PLUGIN_NAME.zip" \
+            "$RUNNER_TEMP/$PLUGIN_NAME.zip.sha256" \
+            --clobber
