@@ -572,6 +572,7 @@ class PythonProgressTests(unittest.TestCase):
         self.assertEqual({name: len(callbacks) for name, callbacks in api.handlers.items()}, {
             "onAdd": 1, "onClear": 1, "onSetActive": 1,
             "onParamFromPlugin": 1, "onDidReceiveSettings": 1,
+            "onSendToPlugin": 1,
         })
         api.handlers["onAdd"][0]({"uuid": ACTION_UUID, "context": "progress"})
         self.assertFalse(scheduler.handle_run({"uuid": "com.other.next", "context": "progress"}))

@@ -290,10 +290,11 @@ class PackagingContractTests(unittest.TestCase):
             self.assertEqual(len(manifest["Actions"]), len(preparer.PORTED_ACTION_SUFFIXES))
             self.assertTrue(all((target / reference).is_file()
                                 for reference in preparer.PROPERTY_INSPECTOR_FILES +
-                                preparer.PROPERTY_INSPECTOR_VENDOR_FILES))
+                                preparer.PROPERTY_INSPECTOR_VENDOR_FILES +
+                                preparer.HELPER_FILES))
             self.assertEqual(set(path.name for path in target.iterdir()),
-                             {"assets", "manifest.json", "package.json", "property-inspector",
-                              "runtime", "src", "vendor"})
+                             {"assets", "helper", "manifest.json", "package.json",
+                              "property-inspector", "runtime", "src", "vendor"})
             self.assertTrue((target / "runtime" / "MediaControlRuntime").is_file())
             self.assertTrue((target / "runtime" / "MediaRemoteHelper").is_file())
             self.assertFalse((target / "runtime" / "MediaControlRuntime.exe").exists())

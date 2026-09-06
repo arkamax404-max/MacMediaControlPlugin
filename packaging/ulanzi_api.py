@@ -35,6 +35,7 @@ class UlanziApi:
     def onSetActive(self, callback): return self._on("setactive", callback)
     def onParamFromPlugin(self, callback): return self._on("paramfromplugin", callback)
     def onDidReceiveSettings(self, callback): return self._on("didReceiveSettings", callback)
+    def onSendToPlugin(self, callback): return self._on("sendToPlugin", callback)
 
     def emit(self, event, payload=None):
         return [callback(payload) for callback in self._listeners.get(event, ())]
@@ -72,3 +73,8 @@ class UlanziApi:
             "uuid": uuid, "key": key, "actionid": actionid, "type": 2, "path": path,
             "textData": text or "", "showtext": bool(text),
         }]}})
+
+    def sendToPropertyInspector(self, payload, context):
+        uuid, key, actionid = self._context(context)
+        self._send("sendToPropertyInspector", {"uuid": uuid, "key": key,
+                                               "actionid": actionid, "payload": payload})

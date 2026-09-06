@@ -13,6 +13,8 @@ function fixture({ argv = ["node", "launcher.js", "127.0.0.1", "3906", "en"] } =
     exitCode: undefined,
     pid: 123,
     stdin,
+    env: { TEST_ENV: "preserved" },
+    execPath: "/Applications/Ulanzi Studio/Ulanzi Studio",
     removeListener: EventEmitter.prototype.removeListener,
   });
   const child = Object.assign(new EventEmitter(), {
@@ -51,6 +53,11 @@ test("forwards exact host arguments and uses safe spawn options", () => {
     shell: false,
     detached: false,
     stdio: ["pipe", "inherit", "inherit"],
+    env: {
+      TEST_ENV: "preserved",
+      MEDIA_CONTROL_NODE_EXECUTABLE: "/Applications/Ulanzi Studio/Ulanzi Studio",
+      MEDIA_CONTROL_PLUGIN_ROOT: "/Applications/Ulanzi Studio/plugin",
+    },
   });
 });
 

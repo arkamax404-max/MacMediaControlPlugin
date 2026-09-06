@@ -70,11 +70,17 @@ export function createLauncher({
     launched = true;
     const { executable, runtimeDirectory } = runtimePaths(baseDirectory, pathImpl);
     try {
+      const pluginRoot = pathImpl.resolve(baseDirectory, "..");
       child = spawnImpl(executable, args, {
         cwd: runtimeDirectory,
         shell: false,
         detached: false,
         stdio: ["pipe", "inherit", "inherit"],
+        env: {
+          ...processImpl.env,
+          MEDIA_CONTROL_NODE_EXECUTABLE: processImpl.execPath,
+          MEDIA_CONTROL_PLUGIN_ROOT: pluginRoot,
+        },
       });
     } catch (error) {
       finish(null, null, error);

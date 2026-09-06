@@ -1,0 +1,12 @@
+{
+  "schema": "com.arkamax404.ulanzi.mediacontrol.compatibility/v1",
+  "studio": {
+    "macos": {
+      "bundleIdentifiers": ["ulanzi.UlanziStudio"],
+      "processNames": ["UlanziDeck"],
+      "dataRoots": ["Library/Application Support/Ulanzi/UlanziDeck"],
+      "profileStores": ["ProfilesV2"],
+      "relaunch": "manual"
+    }
+  }
+}

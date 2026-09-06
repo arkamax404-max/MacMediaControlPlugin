@@ -99,7 +99,7 @@ def inspect_sdk():
     handler_counts = {
         name: len(api._listeners.get(name, []))
         for name in ("add", "run", "keydown", "keyup", "clear", "setactive", "paramfromplugin",
-                      "didReceiveSettings")
+                      "didReceiveSettings", "sendToPlugin")
     }
     expected_handler_counts = {
         "add": 1,
@@ -110,6 +110,7 @@ def inspect_sdk():
         "setactive": 1,
         "paramfromplugin": 1,
         "didReceiveSettings": 1,
+        "sendToPlugin": 1,
     }
     if handler_counts != expected_handler_counts:
         raise RuntimeError(f"Unexpected real SDK handler counts: {handler_counts}")

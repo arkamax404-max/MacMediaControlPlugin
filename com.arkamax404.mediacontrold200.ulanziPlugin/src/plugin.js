@@ -18,6 +18,7 @@ export const DEFAULT_PROGRESS_SETTINGS = Object.freeze({
 
 const ACTIONS = Object.freeze({
   nowplaying: { command: "toggle", icon: "./assets/music.svg" },
+  "largeitem-nowplaying": { command: null, icon: "./assets/largeitem-nowplaying.svg" },
   "artwork-top-left": { command: null, icon: "./assets/artwork-top-left.svg", tile: 0,
     title: "Artwork Top Left" },
   "artwork-top-right": { command: null, icon: "./assets/artwork-top-right.svg", tile: 1,
@@ -33,6 +34,7 @@ const ACTIONS = Object.freeze({
   "volume-down": { command: "volume-down", icon: "./assets/volume-down.svg" },
   "mute-toggle": { command: "mute-toggle", icon: "./assets/mute.svg" },
   progress: { command: null, icon: "./assets/progress.svg" },
+  "setup-large-display": { command: null, icon: "./assets/setup-large-display.svg" },
 });
 
 const COLOR_PATTERN = /^#[0-9A-Fa-f]{6}$/;
@@ -320,6 +322,90 @@ export function svgDataUri(svg) {
   return `data:image/svg+xml;base64,${Buffer.from(String(svg), "utf8").toString("base64")}`;
 }
 
+export const DEFAULT_LARGEITEM_SETTINGS = Object.freeze({
+  showArtwork: true, pausedArtwork: "grayscale", showProgress: true,
+  showElapsed: false, showRemaining: true, backgroundColor: "#0B0D10",
+  primaryColor: "#FFFFFF", secondaryColor: "#B8BEC8", accentColor: "#1DB954",
+  fit: "contain", SmallViewMode: 2,
+});
+
+export function normalizeLargeItemSettings(raw = {}) {
+  const safe = { ...DEFAULT_LARGEITEM_SETTINGS };
+  for (const name of ["showArtwork", "showProgress", "showElapsed", "showRemaining"]) {
+    if (typeof raw?.[name] === "boolean") safe[name] = raw[name];
+  }
+  for (const name of ["backgroundColor", "primaryColor", "secondaryColor", "accentColor"]) {
+    if (COLOR_PATTERN.test(String(raw?.[name] || ""))) safe[name] = raw[name].toUpperCase();
+  }
+  if (["color", "grayscale"].includes(raw?.pausedArtwork)) safe.pausedArtwork = raw.pausedArtwork;
+  if (["contain", "cover"].includes(raw?.fit)) safe.fit = raw.fit;
+  return safe;
+}
+
+function largeItemSettingsMatch(raw, normalized) {
+  return Object.keys(DEFAULT_LARGEITEM_SETTINGS).every(key => raw?.[key] === normalized[key]);
+}
+
+function largeItemContext(event) {
+  const parts = typeof event?.context === "string" ? event.context.split("___") : [];
+  return (typeof event?.key === "string" ? event.key : parts.length === 3 ? parts[1] : null) === "3_2";
+}
+
+function largeItemText(value) {
+  const repaired = Array.from(String(value || ""), character => {
+    const point = character.codePointAt(0);
+    return point >= 0xD800 && point <= 0xDFFF ? "�" : character;
+  }).join("");
+  return Array.from(repaired.normalize("NFC").replace(/\0/g, "").trim().replace(/\s+/gu, " "))
+    .slice(0, 192).join("");
+}
+
+function largeItemLines(value, capacity, maxLines) {
+  let remaining = Array.from(value);
+  const lines = [];
+  for (let index = 0; index < maxLines && remaining.length; index += 1) {
+    if (remaining.length <= capacity) { lines.push(remaining.join("")); break; }
+    let cut = remaining.slice(0, capacity + 1).lastIndexOf(" ");
+    if (cut < Math.floor(capacity / 2)) cut = capacity;
+    lines.push(remaining.slice(0, cut).join("").trimEnd());
+    remaining = Array.from(remaining.slice(cut).join("").trimStart());
+    if (index === maxLines - 1 && remaining.length) {
+      lines[index] = `${Array.from(lines[index]).slice(0, -1).join("").trimEnd()}…`;
+    }
+  }
+  return lines.length ? lines : [""];
+}
+
+export function renderLargeItemSvg(state, bundle, settings = {}, now = Date.now()) {
+  const safe = normalizeLargeItemSettings(settings);
+  const ready = state?.online === true && state?.available === true;
+  const title = largeItemText(ready ? state.title || "Unknown track"
+    : state?.reason === "configuration" ? "Setup required"
+      : state?.reason === "incompatible" ? "Update required"
+        : state?.online === false ? "Media service offline" : "Nothing playing");
+  const artist = largeItemText(ready ? state.artist || "Unknown artist" : "Media Control for D200");
+  const image = safe.showArtwork && ready
+    ? (state.isPlaying || safe.pausedArtwork === "color" ? bundle?.color : bundle?.grayscale) : null;
+  const validImage = artworkDataUri(image);
+  const x = safe.showArtwork && ready ? 204 : 16;
+  const width = safe.showArtwork && ready ? 246 : 426;
+  const titleWidth = width - (ready ? 42 : 0);
+  const titleLines = largeItemLines(title, Math.max(1, Math.floor(titleWidth / 14)), 2);
+  const artistLine = largeItemLines(artist, Math.max(1, Math.floor(width / 12.32)), 1)[0];
+  const position = extrapolatePosition(state, now);
+  const ratio = state?.timelineAvailable && state.durationSeconds > 0
+    ? Math.max(0, Math.min(1, position / state.durationSeconds)) : 0;
+  const artwork = safe.showArtwork && ready ? (validImage
+    ? `<image x="8" y="8" width="180" height="180" preserveAspectRatio="xMidYMid ${safe.fit === "cover" ? "slice" : "meet"}" href="${validImage}"/>`
+    : `<rect x="8" y="8" width="180" height="180" rx="12" fill="${safe.backgroundColor}" stroke="${safe.secondaryColor}" stroke-width="2"/><path d="M70 70v58c0 13-22 13-22 0s22-13 22 0V82l58-12v46c0 13-22 13-22 0s22-13 22 0V58z" fill="${safe.secondaryColor}"/>`) : "";
+  const playback = ready ? `<circle cx="430" cy="28" r="18" fill="${safe.accentColor}"/>${state.isPlaying ? '<path d="M424 19l14 9-14 9z" fill="#FFFFFF"/>' : '<path d="M423 19h5v18h-5zm10 0h5v18h-5z" fill="#FFFFFF"/>'}` : "";
+  const times = state?.timelineAvailable
+    ? `${safe.showElapsed ? `<text x="${x}" y="158" fill="${safe.secondaryColor}" font-family="Arial, sans-serif" font-size="18" font-weight="700">${formatProgressTime("elapsed", position, state.durationSeconds)}</text>` : ""}${safe.showRemaining ? `<text x="${x + width}" y="158" fill="${safe.secondaryColor}" font-family="Arial, sans-serif" font-size="18" font-weight="700" text-anchor="end">${formatProgressTime("remaining", position, state.durationSeconds)}</text>` : ""}` : "";
+  const progress = safe.showProgress && ready
+    ? `${times}<rect x="${x}" y="170" width="${width}" height="8" rx="4" fill="${safe.secondaryColor}" opacity="0.35"/><rect x="${x}" y="170" width="${(width * ratio).toFixed(3)}" height="8" rx="4" fill="${safe.accentColor}"/>` : "";
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="458" height="196" viewBox="0 0 458 196"><rect width="458" height="196" fill="${safe.backgroundColor}"/>${artwork}${playback}${titleLines.map((line, index) => `<text x="${x}" y="${54 + index * 30}" fill="${safe.primaryColor}" font-family="Arial, sans-serif" font-size="25" font-weight="700">${escapeXml(line)}</text>`).join("")}<text x="${x}" y="${titleLines.length === 2 ? 118 : 94}" fill="${safe.secondaryColor}" font-family="Arial, sans-serif" font-size="22" font-weight="700">${escapeXml(artistLine)}</text>${progress}</svg>`;
+}
+
 function settingsMatch(raw, normalized) {
   return Object.keys(DEFAULT_PROGRESS_SETTINGS).every((key) => raw?.[key] === normalized[key]);
 }
@@ -356,6 +442,7 @@ export class SpotifyGSMTCPlugin {
     this.sdk.onParamFromApp((event) => this.receiveSettings(event, false));
     this.sdk.onParamFromPlugin((event) => this.receiveSettings(event, true));
     this.sdk.onDidReceiveSettings?.((event) => this.receiveSettings(event, false));
+    this.sdk.onSendToPlugin?.((event) => this.receiveInspectorMessage(event));
     this.sdk.onClose?.(() => this.stop());
   }
 
@@ -370,17 +457,21 @@ export class SpotifyGSMTCPlugin {
   add(event) {
     const action = actionFromEvent(event);
     if (!action || !event?.context) return;
-    const settings = normalizeProgressSettings(event.param);
+    if (action === "largeitem-nowplaying" && !largeItemContext(event)) return;
+    const settings = action === "progress" ? normalizeProgressSettings(event.param)
+      : action === "largeitem-nowplaying" ? normalizeLargeItemSettings(event.param) : null;
     this.contexts.set(event.context, {
       action,
       active: true,
       settings,
       ...(action === "progress" ? { mode: "remaining" } : {}),
     });
-    if (action === "progress" && !settingsMatch(event.param, settings)) {
+    if ((action === "progress" && !settingsMatch(event.param, settings))
+      || (action === "largeitem-nowplaying" && !largeItemSettingsMatch(event.param, settings))) {
       this.sdk.setSettings?.(settings, event.context);
     }
     this.render(event.context, action, this.lastState, true);
+    if (action === "setup-large-display") return;
     this.startPolling();
     void this.poll();
   }
@@ -407,10 +498,13 @@ export class SpotifyGSMTCPlugin {
 
   receiveSettings(event, persist) {
     const entry = this.entry(event?.context);
-    if (!entry || entry.action !== "progress") return;
+    if (!entry || !["progress", "largeitem-nowplaying"].includes(entry.action)) return;
     const raw = event.param || event.settings || {};
-    entry.settings = normalizeProgressSettings(raw);
-    if (persist || !settingsMatch(raw, entry.settings)) {
+    entry.settings = entry.action === "progress"
+      ? normalizeProgressSettings(raw) : normalizeLargeItemSettings(raw);
+    const matches = entry.action === "progress"
+      ? settingsMatch(raw, entry.settings) : largeItemSettingsMatch(raw, entry.settings);
+    if (persist || !matches) {
       this.sdk.setSettings?.(entry.settings, event.context);
     }
     this.rendered.delete(event.context);
@@ -425,6 +519,10 @@ export class SpotifyGSMTCPlugin {
       this.rendered.delete(event.context);
       this.render(event.context, action, this.lastState, true);
       return true;
+    }
+    if (action === "setup-large-display" && entry) {
+      this.render(event.context, action, this.lastState, true);
+      return false;
     }
     const command = ACTIONS[action]?.command;
     if (!command) return false;
@@ -522,6 +620,15 @@ export class SpotifyGSMTCPlugin {
     }
   }
 
+  receiveInspectorMessage(event) {
+    const entry = this.entry(event?.context);
+    if (entry?.action !== "setup-large-display"
+      || event?.payload?.type !== "requestSetupStatus") return;
+    this.sdk.sendToPropertyInspector?.({ setupStatus: {
+      status: "Failed", reason: "Setup requires the packaged plugin runtime",
+    } }, event.context);
+  }
+
   requestHeaders(snapshot, extra = {}) {
     const headers = { ...extra, Authorization: `Bearer ${snapshot.token}` };
     if (snapshot.instanceId) headers["X-Companion-Instance"] = snapshot.instanceId;
@@ -582,7 +689,7 @@ export class SpotifyGSMTCPlugin {
     if (extrapolatePosition(this.lastState, this.now()) >= this.lastState.durationSeconds) return false;
     for (const [context] of this.contexts) {
       const entry = this.entry(context);
-      if (entry?.action === "progress" && entry.active) return true;
+      if (["progress", "largeitem-nowplaying"].includes(entry?.action) && entry.active) return true;
     }
     return false;
   }
@@ -603,7 +710,7 @@ export class SpotifyGSMTCPlugin {
   animationTick() {
     for (const [context] of this.contexts) {
       const entry = this.entry(context);
-      if (entry?.action === "progress" && entry.active) {
+      if (["progress", "largeitem-nowplaying"].includes(entry?.action) && entry.active) {
         this.render(context, entry.action, this.lastState);
       }
     }
@@ -635,9 +742,25 @@ export class SpotifyGSMTCPlugin {
 
   render(context, action, state, force = false) {
     const entry = this.entry(context);
+    if (action === "setup-large-display") {
+      if (entry?.active === false) return;
+      if (!force && this.rendered.get(context) === "setup-packaged-only") return;
+      this.rendered.set(context, "setup-packaged-only");
+      this.sdk.setPathIcon(context, ACTIONS[action].icon, "Packaged setup required");
+      return;
+    }
     if (action === "progress") {
       if (entry?.active === false) return;
       this.renderProgress(context, state, entry?.settings, entry?.mode, force);
+      return;
+    }
+    if (action === "largeitem-nowplaying") {
+      if (entry?.active === false) return;
+      const bundle = this.artworkBundle?.id === state.artworkId ? this.artworkBundle : null;
+      const svg = renderLargeItemSvg(state, bundle, entry?.settings, this.now());
+      if (!force && this.rendered.get(context) === svg) return;
+      this.rendered.set(context, svg);
+      this.sdk.setBaseDataIcon(context, svgDataUri(svg), "");
       return;
     }
     const mosaic = ACTIONS[action];

@@ -69,6 +69,7 @@ function createSdk() {
     onParamFromApp(fn) { handlers.paramfromapp = fn; },
     onParamFromPlugin(fn) { handlers.paramfromplugin = fn; },
     onDidReceiveSettings(fn) { handlers.settings = fn; },
+    onSendToPlugin(fn) { handlers.sendtoplugin = fn; },
     onClose(fn) { handlers.close = fn; },
     setPathIcon(...args) { calls.push(["path", ...args]); },
     setBaseDataIcon(...args) { calls.push(["base64", ...args]); },
@@ -1159,15 +1160,15 @@ test("manifest declares approved identity, functional entrypoint, and unique act
   assert.equal(manifest.Category, "Media Control for D200");
   assert.equal(manifest.UUID, "com.arkamax404.ulanzi.mediacontrol");
   assert.equal(manifest.CodePath, "src/app.js");
-  assert.equal(manifest.Version, "2.0.8");
+  assert.equal(manifest.Version, "2.1.0");
   assert.equal(manifest.Description, "macOS local media controls with automatic bundled D200 bridge startup");
   assert.deepEqual(manifest.OS, [{ Platform: "macos", MinimumVersion: "13" }]);
   const uuids = [manifest.UUID, ...manifest.Actions.map(({ UUID }) => UUID)];
   assert.equal(new Set(uuids).size, uuids.length);
   assert.deepEqual(manifest.Actions.map(({ UUID }) => UUID), [
-    "nowplaying", "artwork-top-left", "artwork-top-right", "artwork-bottom-left",
+    "nowplaying", "largeitem-nowplaying", "artwork-top-left", "artwork-top-right", "artwork-bottom-left",
     "artwork-bottom-right", "previous", "toggle", "next", "volume-up", "volume-down",
-    "mute-toggle", "progress",
+    "mute-toggle", "progress", "setup-large-display",
   ].map((suffix) => `${manifest.UUID}.${suffix}`));
   readFileSync(new URL(`../${manifest.CodePath}`, import.meta.url));
   const assetPaths = new Set([

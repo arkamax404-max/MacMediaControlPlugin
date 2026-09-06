@@ -11,12 +11,21 @@ PACKAGE_NAME = "media-control-for-d200"
 PORTED_ACTION_SUFFIXES = (
     "nowplaying", "previous", "toggle", "next", "volume-up", "volume-down",
     "mute-toggle", "progress", "artwork-top-left", "artwork-top-right",
-    "artwork-bottom-left", "artwork-bottom-right",
+    "artwork-bottom-left", "artwork-bottom-right", "largeitem-nowplaying",
+    "setup-large-display",
 )
 RUNTIME_ASSET_FILES = ("assets/music.svg", "assets/offline.svg")
 PROPERTY_INSPECTOR_FILES = (
     "property-inspector/progress/inspector.html",
     "property-inspector/progress/inspector.js",
+    "property-inspector/largeitem/inspector.html",
+    "property-inspector/largeitem/inspector.js",
+    "property-inspector/setup/inspector.html",
+    "property-inspector/setup/inspector.js",
+)
+HELPER_FILES = (
+    "helper/Invoke-MediaControlSetup.mjs",
+    "helper/compatibility.json",
 )
 PROPERTY_INSPECTOR_VENDOR_FILES = (
     "vendor/ulanzi-sdk/html/js/constants.js",
@@ -202,10 +211,16 @@ def prepare_package(plugin_source, runtime_bundle, output_root, repo_root):
     manifest["Actions"] = sorted(manifest["Actions"], key=lambda action: ported_order[action["UUID"]])
     if tuple(action["UUID"] for action in manifest["Actions"]) != approved_uuids:
         raise ValueError("External projection must preserve all action UUIDs")
-    progress = next(action for action in manifest["Actions"]
-                    if action.get("UUID") == f"{manifest['UUID']}.progress")
-    if progress.get("PropertyInspectorPath") != PROPERTY_INSPECTOR_FILES[0]:
-        raise ValueError("Progress property inspector path is missing")
+    inspector_actions = {
+        "progress": PROPERTY_INSPECTOR_FILES[0],
+        "largeitem-nowplaying": PROPERTY_INSPECTOR_FILES[2],
+        "setup-large-display": PROPERTY_INSPECTOR_FILES[4],
+    }
+    for suffix, expected_path in inspector_actions.items():
+        action = next(item for item in manifest["Actions"]
+                      if item.get("UUID") == f"{manifest['UUID']}.{suffix}")
+        if action.get("PropertyInspectorPath") != expected_path:
+            raise ValueError(f"{suffix} property inspector path is missing")
     asset_references = {
         manifest.get("Icon"),
         manifest.get("CategoryIcon"),
@@ -217,29 +232,32 @@ def prepare_package(plugin_source, runtime_bundle, output_root, repo_root):
     for reference in asset_references:
         exact_source_path(plugin_source, reference, "assets")
 
-    inspector = exact_source_path(plugin_source, PROPERTY_INSPECTOR_FILES[0],
-                                  "property-inspector")
-    parser = _ScriptReferences()
-    parser.feed(inspector.read_text("utf-8"))
-    resolved_scripts = []
-    inspector_parent = PurePosixPath(PROPERTY_INSPECTOR_FILES[0]).parent
-    for source in parser.sources:
-        source_path = PurePosixPath(source)
-        if source_path.is_absolute():
-            raise ValueError("Property inspector contains an unsafe script path")
-        parts = []
-        for part in (*inspector_parent.parts, *source_path.parts):
-            if part == "..":
-                if not parts:
-                    raise ValueError("Property inspector script escapes the package")
-                parts.pop()
-            elif part not in ("", "."):
-                parts.append(part)
-        resolved_scripts.append(PurePosixPath(*parts).as_posix())
-    expected_scripts = (*PROPERTY_INSPECTOR_VENDOR_FILES, PROPERTY_INSPECTOR_FILES[1])
-    if tuple(resolved_scripts) != expected_scripts:
-        raise ValueError("Property inspector script inventory is not approved")
-    for reference in (*PROPERTY_INSPECTOR_FILES, *PROPERTY_INSPECTOR_VENDOR_FILES):
+    for index in range(0, len(PROPERTY_INSPECTOR_FILES), 2):
+        inspector = exact_source_path(plugin_source, PROPERTY_INSPECTOR_FILES[index],
+                                      "property-inspector")
+        parser = _ScriptReferences()
+        parser.feed(inspector.read_text("utf-8"))
+        resolved_scripts = []
+        inspector_parent = PurePosixPath(PROPERTY_INSPECTOR_FILES[index]).parent
+        for source in parser.sources:
+            source_path = PurePosixPath(source)
+            if source_path.is_absolute():
+                raise ValueError("Property inspector contains an unsafe script path")
+            parts = []
+            for part in (*inspector_parent.parts, *source_path.parts):
+                if part == "..":
+                    if not parts:
+                        raise ValueError("Property inspector script escapes the package")
+                    parts.pop()
+                elif part not in ("", "."):
+                    parts.append(part)
+            resolved_scripts.append(PurePosixPath(*parts).as_posix())
+        expected_scripts = (*PROPERTY_INSPECTOR_VENDOR_FILES,
+                            PROPERTY_INSPECTOR_FILES[index + 1])
+        if tuple(resolved_scripts) != expected_scripts:
+            raise ValueError("Property inspector script inventory is not approved")
+    for reference in (*PROPERTY_INSPECTOR_FILES, *PROPERTY_INSPECTOR_VENDOR_FILES,
+                      *HELPER_FILES):
         exact_source_path(plugin_source, reference, reference.split("/", 1)[0])
 
     target = output_root / PLUGIN_FOLDER
@@ -249,7 +267,8 @@ def prepare_package(plugin_source, runtime_bundle, output_root, repo_root):
         destination = target.joinpath(*path.parts)
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(plugin_source.joinpath(*path.parts), destination)
-    for reference in (*PROPERTY_INSPECTOR_FILES, *PROPERTY_INSPECTOR_VENDOR_FILES):
+    for reference in (*PROPERTY_INSPECTOR_FILES, *PROPERTY_INSPECTOR_VENDOR_FILES,
+                      *HELPER_FILES):
         path = PurePosixPath(reference)
         destination = target.joinpath(*path.parts)
         destination.parent.mkdir(parents=True, exist_ok=True)

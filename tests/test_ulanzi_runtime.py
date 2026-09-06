@@ -36,7 +36,7 @@ class FakeApi:
         self.run_callback = None
         self.listeners = {name: [] for name in
                           ("add", "run", "clear", "setactive", "paramfromplugin",
-                           "didReceiveSettings")}
+                           "didReceiveSettings", "sendToPlugin")}
         self.wait_calls = 0
         self.wait_release = threading.Event()
 
@@ -63,6 +63,9 @@ class FakeApi:
 
     def onParamFromPlugin(self, callback):
         self.listeners["paramfromplugin"].append(callback); return self
+
+    def onSendToPlugin(self, callback):
+        self.listeners["sendToPlugin"].append(callback); return self
 
     def connect(self, uuid, **kwargs):
         self.connect_calls.append((uuid, kwargs))
@@ -170,10 +173,13 @@ class UlanziRuntimeTests(unittest.TestCase):
         self.assertIs(runtime.progress_scheduler.client, runtime.router.client)
         self.assertIs(runtime.progress_scheduler.model, runtime.progress_model)
         self.assertIs(runtime.progress_scheduler.now_playing_model, runtime.now_playing_model)
+        self.assertIs(runtime.progress_scheduler.largeitem_model, runtime.largeitem_model)
+        self.assertIs(runtime.progress_scheduler.setup_controller, runtime.setup_controller)
         self.assertIs(runtime.progress_scheduler.artwork_cache, runtime.artwork_cache)
         self.assertEqual({name: len(items) for name, items in api.listeners.items()}, {
             "add": 1, "run": 1, "clear": 1, "setactive": 1,
             "paramfromplugin": 1, "didReceiveSettings": 1,
+            "sendToPlugin": 1,
         })
         self.assertFalse(runtime.progress_scheduler.worker_alive)
 

@@ -27,9 +27,13 @@ The source manifest keeps `src/app.js` for development. The projected manifest u
 `src/launcher.js`, which starts its bundled local D200 bridge through the extensionless
 `runtime/MediaControlRuntime` target built by `ulanzi_runtime.spec`. Preparation rejects symlinks, unexpected runtime root entries,
 non-macOS binary suffixes, missing licenses, unsafe asset paths, and a changed action
-UUID inventory. It copies every referenced action asset and the progress property
-inspector with its required SDK scripts.
+UUID inventory. It copies every referenced action asset, the three approved property
+inspectors with their required SDK scripts, and the explicit macOS Setup helper and
+compatibility manifest allowlist. The launcher passes its trusted `process.execPath`
+and packaged plugin root to the Python runtime; source `src/app.js` does not expose
+that profile-mutation capability.
 
-The result is a local package projection only. Signing, notarization, marketplace
-submission, and Ulanzi Studio acceptance/installability remain unvalidated external
-work.
+The result is a local package projection only. Local v2.1.0 package, Ulanzi Studio,
+and physical D200 validation succeeded on the tested setup. Signing, notarization,
+marketplace publication or acceptance, and compatibility across other macOS,
+Studio, or device versions remain unproven.

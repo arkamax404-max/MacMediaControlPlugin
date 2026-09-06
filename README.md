@@ -2,7 +2,7 @@
 
 Media Control for D200 is a macOS-only, local companion and Ulanzi Studio plugin for a D200. It displays the current media title, artist, artwork, and progress; sends generic media transport commands; and controls the macOS output volume and mute state. All bridge traffic stays on `127.0.0.1`; no cloud service, account, remote binding, or device discovery is used.
 
-> **Validation status:** the implementation uses macOS MediaRemote for current-media data. MediaRemote is a private macOS framework, so compatibility is not guaranteed by Apple. Local runtime, package, Ulanzi Studio, and D200 validation is still pending. This repository makes no signing, notarization, release, or marketplace availability claim.
+> **Validation status:** local v2.1.0 package, Ulanzi Studio, and physical D200 validation succeeded on the tested setup. The implementation uses macOS MediaRemote for current-media data; because MediaRemote is a private framework, compatibility is not guaranteed by Apple. Signing, notarization, marketplace publication or acceptance, and compatibility across other macOS, Studio, or device versions remain unproven.
 
 ## Released package setup
 
@@ -11,6 +11,16 @@ Media Control for D200 is a macOS-only, local companion and Ulanzi Studio plugin
 - Ulanzi D200
 
 Import the released package into Ulanzi Studio and assign actions from **Media Control for D200**. When an action needs current-media data, Ulanzi Studio starts the package's bundled local D200 bridge automatically. The bridge and plugin run on the same Mac; bridge traffic stays on `127.0.0.1`.
+
+### Large center display
+
+1. Add **Setup Large Display** to a normal key on the active D200 page.
+2. Select **Install**, **Repair**, or **Restore original** in its property inspector, then press the assigned key.
+3. Close Ulanzi Studio only when the Setup action requests it. Reopen Studio manually after the operation completes.
+
+Setup supports the macOS `ProfilesV2` store only. It identifies the active page from the Setup action UUID and its instance `ActionID`, then modifies only center key `3_2`. Install and repair use a hashed, expiring request, a byte-for-byte backup, atomic replacement, readback, and a receipt. Restore accepts only the matching backup lineage and the bounded Studio normalization documented by the implementation; unrelated edits fail closed. The backup is the authority for restoration.
+
+The large view shows artwork, title, artist, playback state, and timeline progress. Ulanzi Studio may retain its macOS clock overlay because Studio can ignore the action's large-view field.
 
 ## Source and build prerequisites
 
@@ -49,6 +59,8 @@ The bridge stores its token at `~/Library/Application Support/GSMTCD200Controlle
 | Mute Toggle | Toggles the macOS system output mute state. |
 | Track Progress | Shows progress; press to cycle remaining, elapsed, and total time. |
 | Artwork Top Left / Top Right / Bottom Left / Bottom Right | Shows one display-only quadrant of the current artwork. |
+| Large Now Playing | Shows current playback on the large center display at key `3_2`. |
+| Setup Large Display | Safely installs, repairs, or restores the center assignment. |
 
 Artwork uses the current media source when MediaRemote provides it, with the bundled music icon as a fallback. The four artwork actions form a 2×2 mosaic when placed together. Volume and mute apply to the Mac's output, not to one application.
 
@@ -74,7 +86,9 @@ python3 -m unittest discover -s tests -v
 
 These suites do not start the bridge, use MediaRemote, control media playback, change audio, launch Ulanzi Studio, or connect to a D200. The [macOS CI workflow](.github/workflows/ci.yml) runs the same suites.
 
-For the local package projection, follow [packaging/README.md](packaging/README.md). It builds a caller-owned local runtime and does not establish package launch, Studio acceptance, signing, notarization, or marketplace readiness.
+Source development renders Large Now Playing for parity, but **Setup Large Display never mutates profiles in source mode**. Profile setup requires the packaged runtime so it can launch the bundled helper through the trusted Node executable.
+
+For the local package projection, follow [packaging/README.md](packaging/README.md). It builds a caller-owned local runtime. Local v2.1.0 package, Studio, and physical D200 validation succeeded on the tested setup, but that does not establish signing, notarization, marketplace publication or acceptance, or cross-version compatibility.
 
 ## Contributing, security, and license
 
