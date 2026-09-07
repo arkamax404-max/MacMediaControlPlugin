@@ -1155,12 +1155,12 @@ test("custom SVG icons declare SDK-sized intrinsic dimensions", () => {
 
 test("manifest declares approved identity, functional entrypoint, and unique action UUIDs", () => {
   const manifest = JSON.parse(readFileSync(new URL("../manifest.json", import.meta.url), "utf8"));
-  assert.equal(manifest.Author, "arkamax404-max");
+  assert.equal(manifest.Author, "Santiago Pérez");
   assert.equal(manifest.Name, "Media Control for D200");
   assert.equal(manifest.Category, "Media Control for D200");
   assert.equal(manifest.UUID, "com.arkamax404.ulanzi.mediacontrol");
   assert.equal(manifest.CodePath, "src/app.js");
-  assert.equal(manifest.Version, "2.1.2");
+  assert.equal(manifest.Version, "2.1.3");
   assert.equal(manifest.Description, "macOS local media controls with automatic bundled D200 bridge startup");
   assert.deepEqual(manifest.OS, [{ Platform: "macos", MinimumVersion: "13" }]);
   const uuids = [manifest.UUID, ...manifest.Actions.map(({ UUID }) => UUID)];
