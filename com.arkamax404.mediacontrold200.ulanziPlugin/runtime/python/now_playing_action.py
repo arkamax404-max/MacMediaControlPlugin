@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import re
 import threading
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -15,6 +16,8 @@ from artwork_bundle import ARTWORK_ID_PATTERN, ArtworkBundle
 
 ACTION_UUID = "com.arkamax404.ulanzi.mediacontrol.nowplaying"
 MUTE_TOGGLE_UUID = "com.arkamax404.ulanzi.mediacontrol.mute-toggle"
+DEFAULT_ICON_COLOR = "#1DB954"
+COLOR_PATTERN = re.compile(r"#[0-9A-Fa-f]{6}")
 MOSAIC_ACTIONS = {
     "com.arkamax404.ulanzi.mediacontrol.artwork-top-left":
         (0, "./assets/artwork-top-left.svg", "Artwork Top Left"),
@@ -38,6 +41,7 @@ TRANSPORT_DISPLAY = {
     PREVIOUS_UUID: "./assets/previous.svg",
     NEXT_UUID: "./assets/next.svg",
 }
+COLOR_ACTIONS = frozenset((*AUDIO_ACTIONS, *TRANSPORT_DISPLAY))
 DISPLAY_ACTION_UUIDS = frozenset((ACTION_UUID, *MOSAIC_ACTIONS, *AUDIO_ACTIONS,
                                   *TRANSPORT_DISPLAY))
 STATE_MAX_AGE_SECONDS = 15
@@ -94,11 +98,20 @@ class RenderIntent:
 
 
 @dataclass(frozen=True)
+class PersistenceRequest:
+    context: str
+    generation: int
+    version: int
+    settings: dict[str, object]
+
+
+@dataclass(frozen=True)
 class ContextView:
     context: str
     generation: int
     version: int
     active: bool
+    icon_color: str
 
 
 @dataclass
@@ -108,6 +121,9 @@ class _Context:
     version: int = 1
     active: bool = True
     committed_signature: tuple[str, str, str] | None = None
+    icon_color: str = DEFAULT_ICON_COLOR
+    persistence_pending: bool = False
+    persistence_attempts: int = 0
 
 
 def unavailable_media_snapshot(reason: str = "unavailable") -> MediaSnapshot:
@@ -161,21 +177,68 @@ def _audio_state_label(snapshot: MediaSnapshot) -> str:
             if snapshot.volume_percent is not None else "null%")
 
 
-def render_mute_toggle_svg(label: str, waves: bool) -> str:
-    glyph = ('<path fill="none" stroke="#1db954" stroke-width="7" stroke-linecap="round" '
+def normalize_icon_color(value: object) -> str:
+    return value.upper() if isinstance(value, str) and COLOR_PATTERN.fullmatch(value) \
+        else DEFAULT_ICON_COLOR
+
+
+def icon_settings_match(raw: object, color: str) -> bool:
+    return isinstance(raw, Mapping) and raw.get("iconColor") == color
+
+
+def render_audio_icon_svg(action: str, color: str = DEFAULT_ICON_COLOR) -> str:
+    color = normalize_icon_color(color)
+    detail = ('M59 38a18 18 0 0 1 0 24M78 40v20M68 50h20'
+              if action.endswith("volume-up")
+              else 'M59 38a18 18 0 0 1 0 24M68 50h20')
+    return ('<svg xmlns="http://www.w3.org/2000/svg" width="196" height="196" '
+            'viewBox="0 0 100 100"><rect width="100" height="100" rx="18" fill="#121212"/>'
+            f'<path fill="{color}" d="M18 42h14l18-15v46L32 58H18z"/>'
+            f'<path fill="none" stroke="{color}" stroke-width="7" stroke-linecap="round" '
+            f'd="{detail}"/></svg>')
+
+
+def audio_icon_data_uri(action: str, color: str = DEFAULT_ICON_COLOR) -> str:
+    svg = render_audio_icon_svg(action, color)
+    return "data:image/svg+xml;base64," + base64.b64encode(svg.encode("utf-8")).decode("ascii")
+
+
+def render_mute_toggle_svg(label: str, waves: bool, color: str = DEFAULT_ICON_COLOR) -> str:
+    color = normalize_icon_color(color)
+    glyph = (f'<path fill="none" stroke="{color}" stroke-width="7" stroke-linecap="round" '
              'd="M61 37a19 19 0 0 1 0 26M72 27a33 33 0 0 1 0 46"/>' if waves else
-             '<path fill="none" stroke="#1db954" stroke-width="8" stroke-linecap="round" '
+             f'<path fill="none" stroke="{color}" stroke-width="8" stroke-linecap="round" '
              'd="m64 39 22 22m0-22L64 61"/>')
     return ('<svg xmlns="http://www.w3.org/2000/svg" width="196" height="196" viewBox="0 0 196 196">'
             '<rect width="196" height="196" rx="35.28" fill="#121212"/>'
             f'<text x="98" y="38" fill="#ffffff" font-family="Arial, sans-serif" font-size="38" '
             f'font-weight="700" text-anchor="middle">{escape(label, quote=True)}</text>'
             '<g transform="translate(-5 -2) scale(2)">'
-            f'<path fill="#1db954" d="M17 42h15l19-16v48L32 58H17z"/>{glyph}</g></svg>')
+            f'<path fill="{color}" d="M17 42h15l19-16v48L32 58H17z"/>{glyph}</g></svg>')
 
 
-def mute_toggle_data_uri(label: str, waves: bool) -> str:
-    svg = render_mute_toggle_svg(label, waves)
+def mute_toggle_data_uri(label: str, waves: bool, color: str = DEFAULT_ICON_COLOR) -> str:
+    svg = render_mute_toggle_svg(label, waves, color)
+    return "data:image/svg+xml;base64," + base64.b64encode(svg.encode("utf-8")).decode("ascii")
+
+
+def render_transport_icon_svg(action: str, playing: bool = False,
+                              color: str = DEFAULT_ICON_COLOR) -> str:
+    color = normalize_icon_color(color)
+    if action == TOGGLE_UUID:
+        path = "M29 24h15v52H29zm27 0h15v52H56z" if playing else "m34 24 45 26-45 26z"
+    elif action == PREVIOUS_UUID:
+        path = "M25 25h9v50h-9zm11 25 39-25v50z"
+    else:
+        path = "m25 25 39 25-39 25zm41 0h9v50h-9z"
+    return ('<svg xmlns="http://www.w3.org/2000/svg" width="196" height="196" '
+            'viewBox="0 0 100 100"><rect width="100" height="100" rx="18" fill="#121212"/>'
+            f'<path fill="{color}" d="{path}"/></svg>')
+
+
+def transport_icon_data_uri(action: str, playing: bool = False,
+                            color: str = DEFAULT_ICON_COLOR) -> str:
+    svg = render_transport_icon_svg(action, playing, color)
     return "data:image/svg+xml;base64," + base64.b64encode(svg.encode("utf-8")).decode("ascii")
 
 
@@ -192,18 +255,27 @@ class NowPlayingActionModel:
             return None
         with self._lock:
             entry = self._contexts.get(context)
-            return (ContextView(context, entry.generation, entry.version, entry.active)
+            return (ContextView(context, entry.generation, entry.version, entry.active,
+                                entry.icon_color)
                     if entry else None)
 
     def add(self, event: object) -> tuple[RenderRequest, ...]:
         action, context = _event_identity(event)
         if action not in DISPLAY_ACTION_UUIDS or not context:
             return ()
+        raw = event.get("param") if isinstance(event, Mapping) else None
+        icon_color = (normalize_icon_color(raw.get("iconColor"))
+                      if action in COLOR_ACTIONS and isinstance(raw, Mapping)
+                      else DEFAULT_ICON_COLOR)
         with self._lock:
             if self._shutdown:
                 return ()
             self._next_generation += 1
-            entry = _Context(self._next_generation, action)
+            entry = _Context(
+                self._next_generation, action, icon_color=icon_color,
+                persistence_pending=(action in COLOR_ACTIONS
+                                     and not icon_settings_match(raw, icon_color)),
+            )
             self._contexts[context] = entry
             return (self._request(context, entry),)
 
@@ -242,10 +314,61 @@ class NowPlayingActionModel:
             entry.committed_signature = None
             return (self._request(context, entry),) if active else ()
 
+    def receive_settings(self, event: object,
+                         persist: bool = False) -> tuple[RenderRequest, ...]:
+        if not isinstance(event, Mapping):
+            return ()
+        context = _identity(event.get("context"))
+        raw = event.get("settings", event.get("param"))
+        if context is None or not isinstance(raw, Mapping):
+            return ()
+        icon_color = normalize_icon_color(raw.get("iconColor"))
+        with self._lock:
+            entry = self._contexts.get(context)
+            if self._shutdown or entry is None or entry.action not in COLOR_ACTIONS:
+                return ()
+            changed = entry.icon_color != icon_color
+            entry.icon_color = icon_color
+            entry.persistence_pending = persist or not icon_settings_match(raw, icon_color)
+            entry.persistence_attempts = 0
+            if changed:
+                entry.version += 1
+                entry.committed_signature = None
+            return ((self._request(context, entry),)
+                    if entry.active and (changed or entry.persistence_pending) else ())
+
     def requests(self) -> tuple[RenderRequest, ...]:
         with self._lock:
             return tuple(self._request(context, entry) for context, entry in self._contexts.items()
                          if entry.active)
+
+    def persistence_requests(self) -> tuple[PersistenceRequest, ...]:
+        with self._lock:
+            return tuple(
+                PersistenceRequest(context, entry.generation, entry.version,
+                                   {"iconColor": entry.icon_color})
+                for context, entry in self._contexts.items()
+                if entry.active and entry.persistence_pending
+            )
+
+    def reserve_persistence_send(self, request: PersistenceRequest) -> bool:
+        with self._lock:
+            entry = self._matching(request)
+            return bool(entry and entry.active and entry.persistence_pending)
+
+    def is_persistence_current(self, request: PersistenceRequest) -> bool:
+        return self.reserve_persistence_send(request)
+
+    def acknowledge_persistence(self, request: PersistenceRequest, success: bool,
+                                max_attempts: int) -> bool:
+        with self._lock:
+            entry = self._matching(request)
+            if entry is None or not entry.active or not entry.persistence_pending:
+                return False
+            entry.persistence_attempts += 1
+            if success or entry.persistence_attempts >= max_attempts:
+                entry.persistence_pending = False
+            return True
 
     def render(self, request: RenderRequest, snapshot: MediaSnapshot,
                bundle: ArtworkBundle | None = None) -> RenderIntent | None:
@@ -257,6 +380,7 @@ class NowPlayingActionModel:
         with self._lock:
             entry = self._matching(request)
             action = entry.action if entry and entry.active else None
+            icon_color = entry.icon_color if entry else DEFAULT_ICON_COLOR
         if action is None:
             return None
         online, available = snapshot.online, snapshot.available
@@ -280,19 +404,22 @@ class NowPlayingActionModel:
             if action == MUTE_TOGGLE_UUID:
                 method = "setBaseDataIcon"
                 image = mute_toggle_data_uri(_audio_state_label(snapshot),
-                                             snapshot.audio_available and snapshot.is_muted)
+                                             snapshot.audio_available and snapshot.is_muted,
+                                             icon_color)
                 text = ""
             else:
-                method, image = "setPathIcon", audio
+                method, image = "setBaseDataIcon", audio_icon_data_uri(action, icon_color)
                 text = _audio_state_label(snapshot)
         elif transport is not None:
-            method = "setPathIcon"
             if not available:
-                image, text = OFFLINE_ICON, "Offline"
+                method, image, text = "setPathIcon", OFFLINE_ICON, "Offline"
             elif action == TOGGLE_UUID:
-                image, text = (PAUSE_ICON, "Pause") if playing else (PLAY_ICON, "Play")
+                method = "setBaseDataIcon"
+                image = transport_icon_data_uri(action, playing, icon_color)
+                text = "Pause" if playing else "Play"
             else:
-                image = transport
+                method = "setBaseDataIcon"
+                image = transport_icon_data_uri(action, False, icon_color)
                 text = "Previous" if action == PREVIOUS_UUID else "Next"
         elif not online or not available:
             method, image = "setPathIcon", OFFLINE_ICON

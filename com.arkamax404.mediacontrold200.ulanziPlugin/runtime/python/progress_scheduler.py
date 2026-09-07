@@ -184,6 +184,10 @@ class ProgressScheduler:
         if self.largeitem_model.context(context) is not None:
             return self._change(self.largeitem_model.receive_settings(
                 {"context": context, "settings": raw}, persist=persist))
+        if self.now_playing_model.context(context) is not None:
+            requests = self.now_playing_model.receive_settings(
+                {"context": context, "settings": raw}, persist=persist)
+            return self._change(requests)
         return self._change(self.model.receive_settings(
             {"context": context, "settings": raw}, persist=persist
         ))
@@ -262,10 +266,13 @@ class ProgressScheduler:
             media_state = self._media_state
             if media_state is not None and (media_changed or artwork_changed
                                             or dirty or self._now_retry):
+                persistence_retry = self._persist_model(
+                    self.now_playing_model,
+                    self.now_playing_model.persistence_requests())
                 self._now_retry = self._render_now_all(
                     now_requests, media_state,
                     self.artwork_cache.get(media_state.artwork_id)
-                    if media_state.artwork_id else None)
+                    if media_state.artwork_id else None) or persistence_retry
             if (media_state is not None and state is not None
                     and (media_changed or artwork_changed or changed or tick or dirty
                          or self._large_retry)):

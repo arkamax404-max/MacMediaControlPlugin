@@ -31,6 +31,7 @@ from bridge_client import (  # noqa: E402
 from now_playing_action import (  # noqa: E402
     ACTION_UUID,
     AUDIO_ACTIONS,
+    DEFAULT_ICON_COLOR,
     DISPLAY_ACTION_UUIDS,
     MOSAIC_ACTIONS,
     MUTE_TOGGLE_UUID,
@@ -42,8 +43,11 @@ from now_playing_action import (  # noqa: E402
     NowPlayingActionModel,
     RenderIntent,
     RenderRequest,
+    audio_icon_data_uri,
+    normalize_icon_color,
     normalize_media_snapshot,
     now_playing_text,
+    transport_icon_data_uri,
     unavailable_media_snapshot,
 )
 
@@ -77,25 +81,22 @@ def payload(artwork_id=ARTWORK_ID, values=None):
             "tiles": values[2:]}
 
 
-MUTE_CROSS_GLYPH = ('<path fill="none" stroke="#1db954" stroke-width="8" stroke-linecap="round" '
-                    'd="m64 39 22 22m0-22L64 61"/>')
-MUTE_WAVES_GLYPH = ('<path fill="none" stroke="#1db954" stroke-width="7" stroke-linecap="round" '
-                    'd="M61 37a19 19 0 0 1 0 26M72 27a33 33 0 0 1 0 46"/>')
-
-
-def mute_svg(label, waves=False):
-    glyph = MUTE_WAVES_GLYPH if waves else MUTE_CROSS_GLYPH
+def mute_svg(label, waves=False, color=DEFAULT_ICON_COLOR):
+    glyph = (f'<path fill="none" stroke="{color}" stroke-width="7" stroke-linecap="round" '
+             'd="M61 37a19 19 0 0 1 0 26M72 27a33 33 0 0 1 0 46"/>' if waves else
+             f'<path fill="none" stroke="{color}" stroke-width="8" stroke-linecap="round" '
+             'd="m64 39 22 22m0-22L64 61"/>')
     return ('<svg xmlns="http://www.w3.org/2000/svg" width="196" height="196" viewBox="0 0 196 196">'
             '<rect width="196" height="196" rx="35.28" fill="#121212"/>'
             f'<text x="98" y="38" fill="#ffffff" font-family="Arial, sans-serif" font-size="38" '
             f'font-weight="700" text-anchor="middle">{label}</text>'
             '<g transform="translate(-5 -2) scale(2)">'
-            f'<path fill="#1db954" d="M17 42h15l19-16v48L32 58H17z"/>{glyph}</g></svg>')
+            f'<path fill="{color}" d="M17 42h15l19-16v48L32 58H17z"/>{glyph}</g></svg>')
 
 
-def mute_uri(label, waves=False):
+def mute_uri(label, waves=False, color=DEFAULT_ICON_COLOR):
     return ("data:image/svg+xml;base64,"
-            + base64.b64encode(mute_svg(label, waves).encode("utf-8")).decode("ascii"))
+            + base64.b64encode(mute_svg(label, waves, color).encode("utf-8")).decode("ascii"))
 
 
 def health():
@@ -500,10 +501,10 @@ console.log(JSON.stringify(values.map((title) => normalizeBridgeState({ ...base,
             return MediaSnapshot(**{**base, **overrides})
 
         for action in (item for item in AUDIO_ACTIONS if item != MUTE_TOGGLE_UUID):
-            icon = AUDIO_ACTIONS[action]
+            icon = audio_icon_data_uri(action)
             intent = model.render(requests[action], snapshot())
             self.assertEqual((intent.method, intent.image, intent.text),
-                             ("setPathIcon", icon, "55%"))
+                             ("setBaseDataIcon", icon, "55%"))
             intent = model.render(requests[action], snapshot(volume_percent=None))
             self.assertEqual((intent.image, intent.text), (icon, "null%"))
             intent = model.render(requests[action], snapshot(volume_percent=0))
@@ -536,16 +537,16 @@ console.log(JSON.stringify(values.map((title) => normalizeBridgeState({ ...base,
         muted = [model.render(requests[action], snapshot(is_muted=True))
                  for action in AUDIO_ACTIONS]
         self.assertEqual([(intent.method, intent.image, intent.text) for intent in muted[:2]], [
-            ("setPathIcon", "./assets/volume-up.svg", "Muted"),
-            ("setPathIcon", "./assets/volume-down.svg", "Muted"),
+            ("setBaseDataIcon", audio_icon_data_uri(list(AUDIO_ACTIONS)[0]), "Muted"),
+            ("setBaseDataIcon", audio_icon_data_uri(list(AUDIO_ACTIONS)[1]), "Muted"),
         ])
         self.assertEqual((muted[2].method, muted[2].image, muted[2].text),
                          ("setBaseDataIcon", mute_uri("Muted", waves=True), ""))
         mixed = [model.render(requests[action], snapshot(is_muted=True, audio_mixed=True))
                  for action in AUDIO_ACTIONS]
         self.assertEqual([(intent.method, intent.image, intent.text) for intent in mixed[:2]], [
-            ("setPathIcon", "./assets/volume-up.svg", "Mixed"),
-            ("setPathIcon", "./assets/volume-down.svg", "Mixed"),
+            ("setBaseDataIcon", audio_icon_data_uri(list(AUDIO_ACTIONS)[0]), "Mixed"),
+            ("setBaseDataIcon", audio_icon_data_uri(list(AUDIO_ACTIONS)[1]), "Mixed"),
         ])
         self.assertEqual((mixed[2].method, mixed[2].image, mixed[2].text),
                          ("setBaseDataIcon", mute_uri("Mixed", waves=True), ""))
@@ -600,6 +601,35 @@ console.log(JSON.stringify(values.map((title) => normalizeBridgeState({ ...base,
         self.assertEqual(group.get("transform"), "translate(-5 -2) scale(2)")
         self.assertEqual([path.get("d") for path in group.findall(namespace + "path")],
                          ["M17 42h15l19-16v48L32 58H17z", "m64 39 22 22m0-22L64 61"])
+
+    def test_control_icon_color_is_canonical_bounded_and_context_local(self):
+        self.assertEqual(normalize_icon_color("#abcdef"), "#ABCDEF")
+        for invalid in (None, "red", "#123", "#12345678", 123456):
+            self.assertEqual(normalize_icon_color(invalid), DEFAULT_ICON_COLOR)
+        model = NowPlayingActionModel()
+        custom = model.add({"uuid": PREVIOUS_UUID, "context": "custom",
+                            "param": {"iconColor": "#a1b2c3"}})[0]
+        default = model.add({"uuid": PREVIOUS_UUID, "context": "default",
+                             "param": {"iconColor": "invalid"}})[0]
+        snapshot = MediaSnapshot(True, True, False, "", "", None, "ready")
+        custom_svg = base64.b64decode(
+            model.render(custom, snapshot).image.split(",", 1)[1]).decode("utf-8")
+        default_svg = base64.b64decode(
+            model.render(default, snapshot).image.split(",", 1)[1]).decode("utf-8")
+        self.assertIn('fill="#A1B2C3"', custom_svg)
+        self.assertNotIn(DEFAULT_ICON_COLOR, custom_svg)
+        self.assertIn(DEFAULT_ICON_COLOR, default_svg)
+        changed = model.receive_settings(
+            {"context": "custom", "settings": {"iconColor": "#123456"}}, persist=True)[0]
+        self.assertEqual(model.context("custom").icon_color, "#123456")
+        self.assertIn("#123456", base64.b64decode(
+            model.render(changed, snapshot).image.split(",", 1)[1]).decode("utf-8"))
+        stale_persistence = model.persistence_requests()[0]
+        self.assertTrue(model.clear({"param": [{"context": "custom"}]}))
+        model.add({"uuid": PREVIOUS_UUID, "context": "custom",
+                   "param": {"iconColor": "#123456"}})
+        self.assertFalse(model.reserve_persistence_send(stale_persistence),
+                         "recreated contexts reject stale settings generations")
 
     def test_audio_snapshot_fields_parse_strictly_and_clamp(self):
         def state(**values):
@@ -689,16 +719,17 @@ console.log(JSON.stringify(values.map((title) => normalizeBridgeState({ ...base,
             return MediaSnapshot(**{**base, **overrides})
 
         expected = {
-            TOGGLE_UUID: [("./assets/pause.svg", "Pause"), ("./assets/play.svg", "Play")],
-            PREVIOUS_UUID: [("./assets/previous.svg", "Previous")],
-            NEXT_UUID: [("./assets/next.svg", "Next")],
+            TOGGLE_UUID: [(True, "Pause"), (False, "Play")],
+            PREVIOUS_UUID: [(False, "Previous")],
+            NEXT_UUID: [(False, "Next")],
         }
         for action, variants in expected.items():
-            for is_playing, (icon, label) in zip((True, False), variants):
+            for is_playing, label in variants:
                 with self.subTest(action=action, is_playing=is_playing):
                     intent = model.render(requests[action], snapshot(is_playing=is_playing))
                     self.assertEqual((intent.method, intent.image, intent.text),
-                                     ("setPathIcon", icon, label))
+                                     ("setBaseDataIcon",
+                                      transport_icon_data_uri(action, is_playing), label))
         for action in TRANSPORT_DISPLAY:
             no_session = model.render(requests[action],
                                        snapshot(available=False, status="no_session"))
@@ -719,19 +750,20 @@ console.log(JSON.stringify(values.map((title) => normalizeBridgeState({ ...base,
         paused = MediaSnapshot(True, True, False, "", "", None, "ready")
         first = model.render(request, playing)
         self.assertEqual((first.method, first.image, first.text),
-                         ("setPathIcon", "./assets/pause.svg", "Pause"))
+                         ("setBaseDataIcon", transport_icon_data_uri(TOGGLE_UUID, True), "Pause"))
         self.assertTrue(model.reserve_send(first))
         self.assertTrue(model.acknowledge(first, True))
         self.assertIsNone(model.render(request, playing), "unchanged playing state dedups")
         flip = model.render(request, paused)
         self.assertEqual((flip.method, flip.image, flip.text),
-                         ("setPathIcon", "./assets/play.svg", "Play"))
+                         ("setBaseDataIcon", transport_icon_data_uri(TOGGLE_UUID), "Play"))
         self.assertTrue(model.reserve_send(flip))
         self.assertTrue(model.acknowledge(flip, True))
         self.assertIsNone(model.render(request, paused),
                           "an is_playing flip sends exactly one new intent")
         resumed = model.render(request, playing)
-        self.assertEqual((resumed.image, resumed.text), ("./assets/pause.svg", "Pause"))
+        self.assertEqual((resumed.image, resumed.text),
+                         (transport_icon_data_uri(TOGGLE_UUID, True), "Pause"))
         self.assertTrue(model.acknowledge(resumed, True))
         self.assertIsNone(model.render(request, playing))
 
@@ -745,11 +777,11 @@ console.log(JSON.stringify(values.map((title) => normalizeBridgeState({ ...base,
                 self.assertEqual(model.add({"uuid": action + "-unknown", "context": "bad"}), ())
                 self.assertEqual(len(model.requests()), 2)
                 intent = model.render(first, playing)
-                icon, label = (("./assets/pause.svg", "Pause") if action == TOGGLE_UUID
-                               else (TRANSPORT_DISPLAY[action],
-                                     "Previous" if action == PREVIOUS_UUID else "Next"))
+                label = ("Pause" if action == TOGGLE_UUID
+                         else "Previous" if action == PREVIOUS_UUID else "Next")
                 self.assertEqual((intent.method, intent.image, intent.text),
-                                 ("setPathIcon", icon, label))
+                                 ("setBaseDataIcon",
+                                  transport_icon_data_uri(action, action == TOGGLE_UUID), label))
                 self.assertTrue(model.reserve_send(intent))
                 self.assertTrue(model.acknowledge(intent, True))
                 self.assertIsNone(model.render(first, playing), "successful sends dedup")

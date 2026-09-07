@@ -22,7 +22,25 @@ PROPERTY_INSPECTOR_FILES = (
     "property-inspector/largeitem/inspector.js",
     "property-inspector/setup/inspector.html",
     "property-inspector/setup/inspector.js",
+    "property-inspector/transport/previous.html",
+    "property-inspector/transport/toggle.html",
+    "property-inspector/transport/next.html",
+    "property-inspector/volume-up/inspector.html",
+    "property-inspector/volume-down/inspector.html",
+    "property-inspector/mute/inspector.html",
+    "property-inspector/shared/icon-color.js",
 )
+PROPERTY_INSPECTORS = {
+    "property-inspector/progress/inspector.html": "property-inspector/progress/inspector.js",
+    "property-inspector/largeitem/inspector.html": "property-inspector/largeitem/inspector.js",
+    "property-inspector/setup/inspector.html": "property-inspector/setup/inspector.js",
+    "property-inspector/transport/previous.html": "property-inspector/shared/icon-color.js",
+    "property-inspector/transport/toggle.html": "property-inspector/shared/icon-color.js",
+    "property-inspector/transport/next.html": "property-inspector/shared/icon-color.js",
+    "property-inspector/volume-up/inspector.html": "property-inspector/shared/icon-color.js",
+    "property-inspector/volume-down/inspector.html": "property-inspector/shared/icon-color.js",
+    "property-inspector/mute/inspector.html": "property-inspector/shared/icon-color.js",
+}
 HELPER_FILES = (
     "helper/Invoke-MediaControlSetup.mjs",
     "helper/compatibility.json",
@@ -215,6 +233,12 @@ def prepare_package(plugin_source, runtime_bundle, output_root, repo_root):
         "progress": PROPERTY_INSPECTOR_FILES[0],
         "largeitem-nowplaying": PROPERTY_INSPECTOR_FILES[2],
         "setup-large-display": PROPERTY_INSPECTOR_FILES[4],
+        "previous": "property-inspector/transport/previous.html",
+        "toggle": "property-inspector/transport/toggle.html",
+        "next": "property-inspector/transport/next.html",
+        "volume-up": "property-inspector/volume-up/inspector.html",
+        "volume-down": "property-inspector/volume-down/inspector.html",
+        "mute-toggle": "property-inspector/mute/inspector.html",
     }
     for suffix, expected_path in inspector_actions.items():
         action = next(item for item in manifest["Actions"]
@@ -232,13 +256,13 @@ def prepare_package(plugin_source, runtime_bundle, output_root, repo_root):
     for reference in asset_references:
         exact_source_path(plugin_source, reference, "assets")
 
-    for index in range(0, len(PROPERTY_INSPECTOR_FILES), 2):
-        inspector = exact_source_path(plugin_source, PROPERTY_INSPECTOR_FILES[index],
+    for inspector_name, expected_script in PROPERTY_INSPECTORS.items():
+        inspector = exact_source_path(plugin_source, inspector_name,
                                       "property-inspector")
         parser = _ScriptReferences()
         parser.feed(inspector.read_text("utf-8"))
         resolved_scripts = []
-        inspector_parent = PurePosixPath(PROPERTY_INSPECTOR_FILES[index]).parent
+        inspector_parent = PurePosixPath(inspector_name).parent
         for source in parser.sources:
             source_path = PurePosixPath(source)
             if source_path.is_absolute():
@@ -253,7 +277,7 @@ def prepare_package(plugin_source, runtime_bundle, output_root, repo_root):
                     parts.append(part)
             resolved_scripts.append(PurePosixPath(*parts).as_posix())
         expected_scripts = (*PROPERTY_INSPECTOR_VENDOR_FILES,
-                            PROPERTY_INSPECTOR_FILES[index + 1])
+                            expected_script)
         if tuple(resolved_scripts) != expected_scripts:
             raise ValueError("Property inspector script inventory is not approved")
     for reference in (*PROPERTY_INSPECTOR_FILES, *PROPERTY_INSPECTOR_VENDOR_FILES,

@@ -64,6 +64,8 @@ The bridge stores its token at `~/Library/Application Support/GSMTCD200Controlle
 
 Artwork uses the current media source when MediaRemote provides it, with the bundled music icon as a fallback. The four artwork actions form a 2×2 mosaic when placed together. Volume and mute apply to the Mac's output, not to one application.
 
+Previous, Play/Pause, Next, Volume Up, Volume Down, and Mute Toggle each provide an independent icon color setting. Existing profiles retain the default `#1DB954` color.
+
 ## Architecture
 
 ```text

@@ -6,6 +6,7 @@ import test from "node:test";
 import {
   ANIMATION_INTERVAL_MS,
   BRIDGE_ORIGIN,
+  DEFAULT_ICON_COLOR,
   DEFAULT_PROGRESS_SETTINGS,
   SpotifyGSMTCPlugin,
   actionFromEvent,
@@ -19,11 +20,20 @@ import {
   nextProgressMode,
   normalizeArtworkBundle,
   normalizeBridgeState,
+  normalizeIconColor,
   normalizeProgressSettings,
   progressTextLayout,
   renderProgressSvg,
+  renderAudioIconSvg,
+  renderMuteToggleSvg,
+  renderTransportIconSvg,
   svgDataUri,
 } from "../src/plugin.js";
+import {
+  DEFAULT_ICON_COLOR as INSPECTOR_DEFAULT_ICON_COLOR,
+  normalizeIconColor as normalizeInspectorIconColor,
+  startInspector as startIconColorInspector,
+} from "../property-inspector/shared/icon-color.js";
 import {
   normalizeInspectorSettings,
   serializeInspectorSettings,
@@ -1069,6 +1079,67 @@ test("targets every audio command at its fixed loopback endpoint", async () => {
   ]);
 });
 
+test("renders and persists independent control icon colors", () => {
+  assert.equal(INSPECTOR_DEFAULT_ICON_COLOR, DEFAULT_ICON_COLOR);
+  assert.equal(normalizeInspectorIconColor("#abcdef"), "#ABCDEF");
+  assert.equal(normalizeInspectorIconColor("blue"), DEFAULT_ICON_COLOR);
+  assert.equal(normalizeIconColor("#abcdef"), "#ABCDEF");
+  const sdk = createSdk();
+  const plugin = createPlugin({ sdk });
+  const available = { online: true, available: true, audioAvailable: true,
+    volumePercent: 50, isMuted: false, audioMixed: false, revision: 1, isPlaying: false };
+  plugin.contexts.set("previous", { action: "previous", active: true, iconColor: "#ABCDEF" });
+  plugin.contexts.set("toggle", { action: "toggle", active: true, iconColor: "#123456" });
+  plugin.contexts.set("volume", { action: "volume-up", active: true, iconColor: "#FEDCBA" });
+  plugin.render("previous", "previous", available);
+  plugin.render("toggle", "toggle", available);
+  plugin.render("toggle", "toggle", { ...available, revision: 2, isPlaying: true });
+  plugin.render("volume", "volume-up", available);
+  assert.deepEqual(sdk.calls, [
+    ["base64", "previous", svgDataUri(renderTransportIconSvg("previous", false, "#ABCDEF")), "Previous"],
+    ["base64", "toggle", svgDataUri(renderTransportIconSvg("toggle", false, "#123456")), "Play"],
+    ["base64", "toggle", svgDataUri(renderTransportIconSvg("toggle", true, "#123456")), "Pause"],
+    ["base64", "volume", svgDataUri(renderAudioIconSvg("volume-up", "#FEDCBA")), "50%"],
+  ]);
+  plugin.receiveSettings({ context: "previous", param: { iconColor: "#fedcba" } }, true);
+  assert.deepEqual(sdk.calls.find(([kind]) => kind === "settings"), [
+    "settings", { iconColor: "#FEDCBA" }, "previous",
+  ]);
+});
+
+test("icon color inspector restores settings and sends canonical HEX", () => {
+  const handlers = {};
+  const calls = [];
+  const color = { value: "" };
+  const colorHex = { value: "" };
+  const form = { addEventListener(_name, handler) { handlers.change = handler; } };
+  const documentRef = {
+    documentElement: { dataset: { action: "next" } },
+    querySelector(selector) {
+      return { "#icon-color-settings": form, "#icon-color": color,
+        "#icon-color-hex": colorHex }[selector] || null;
+    },
+  };
+  const sdk = {
+    onAdd(handler) { handlers.add = handler; },
+    onParamFromApp(handler) { handlers.app = handler; },
+    onParamFromPlugin(handler) { handlers.plugin = handler; },
+    onDidReceiveSettings(handler) { handlers.settings = handler; },
+    sendParamFromPlugin(payload) { calls.push(["send", payload]); },
+    connect(uuid) { calls.push(["connect", uuid]); },
+  };
+  startIconColorInspector(sdk, documentRef);
+  handlers.add({ param: { iconColor: "#abcdef" } });
+  assert.equal(color.value, "#ABCDEF");
+  assert.equal(colorHex.value, "#ABCDEF");
+  colorHex.value = "#123456";
+  handlers.change({ target: colorHex });
+  assert.deepEqual(calls, [
+    ["connect", "com.arkamax404.ulanzi.mediacontrol.next"],
+    ["send", { iconColor: "#123456" }],
+  ]);
+});
+
 test("renders volume, mute, mixed, no-audio, and offline states", () => {
   const sdk = createSdk();
   const plugin = createPlugin({ sdk });
@@ -1080,10 +1151,10 @@ test("renders volume, mute, mixed, no-audio, and offline states", () => {
   plugin.render("none", "volume-up", { ...audio, revision: 4, audioAvailable: false });
   plugin.render("offline", "mute-toggle", { ...audio, revision: 5, online: false });
   assert.deepEqual(sdk.calls, [
-    ["path", "volume", "./assets/volume-up.svg", "65%"],
-    ["path", "muted", "./assets/unmute.svg", "Muted"],
-    ["path", "mixed", "./assets/volume-down.svg", "Mixed"],
-    ["path", "none", "./assets/volume-up.svg", "No audio"],
+    ["base64", "volume", svgDataUri(renderAudioIconSvg("volume-up")), "65%"],
+    ["base64", "muted", svgDataUri(renderMuteToggleSvg("Muted", true)), ""],
+    ["base64", "mixed", svgDataUri(renderAudioIconSvg("volume-down")), "Mixed"],
+    ["base64", "none", svgDataUri(renderAudioIconSvg("volume-up")), "No audio"],
     ["path", "offline", "./assets/offline.svg", "Offline"],
   ]);
 });
@@ -1123,18 +1194,10 @@ test("prefixes every local icon path passed to the SDK", () => {
   plugin.render("unmute", "mute-toggle", { ...available, revision: 2,
     audioAvailable: true, volumePercent: 50, isMuted: true, audioMixed: false });
 
-  const paths = sdk.calls.map(([, , path]) => path);
+  const paths = sdk.calls.filter(([kind]) => kind === "path").map(([, , path]) => path);
   assert.deepEqual(paths, [
     "./assets/offline.svg",
     "./assets/music.svg",
-    "./assets/play.svg",
-    "./assets/pause.svg",
-    "./assets/previous.svg",
-    "./assets/next.svg",
-    "./assets/volume-up.svg",
-    "./assets/volume-down.svg",
-    "./assets/mute.svg",
-    "./assets/unmute.svg",
   ]);
   assert.ok(paths.every((path) => path.startsWith("./")));
 });
@@ -1160,9 +1223,27 @@ test("manifest declares approved identity, functional entrypoint, and unique act
   assert.equal(manifest.Category, "Media Control for D200");
   assert.equal(manifest.UUID, "com.arkamax404.ulanzi.mediacontrol");
   assert.equal(manifest.CodePath, "src/app.js");
-  assert.equal(manifest.Version, "2.1.3");
+  assert.equal(manifest.Version, "2.2.0");
   assert.equal(manifest.Description, "macOS local media controls with automatic bundled D200 bridge startup");
   assert.deepEqual(manifest.OS, [{ Platform: "macos", MinimumVersion: "13" }]);
+  const inspectors = Object.fromEntries(manifest.Actions.map((action) => [
+    action.UUID.split(".").at(-1), action.PropertyInspectorPath,
+  ]));
+  assert.deepEqual({
+    previous: inspectors.previous,
+    toggle: inspectors.toggle,
+    next: inspectors.next,
+    volumeUp: inspectors["volume-up"],
+    volumeDown: inspectors["volume-down"],
+    mute: inspectors["mute-toggle"],
+  }, {
+    previous: "property-inspector/transport/previous.html",
+    toggle: "property-inspector/transport/toggle.html",
+    next: "property-inspector/transport/next.html",
+    volumeUp: "property-inspector/volume-up/inspector.html",
+    volumeDown: "property-inspector/volume-down/inspector.html",
+    mute: "property-inspector/mute/inspector.html",
+  });
   const uuids = [manifest.UUID, ...manifest.Actions.map(({ UUID }) => UUID)];
   assert.equal(new Set(uuids).size, uuids.length);
   assert.deepEqual(manifest.Actions.map(({ UUID }) => UUID), [
