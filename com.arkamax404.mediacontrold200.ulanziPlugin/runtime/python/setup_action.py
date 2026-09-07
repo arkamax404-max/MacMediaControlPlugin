@@ -427,7 +427,7 @@ def _canonical_large_center(action: Mapping[str, object]) -> bool:
         "LinkedTitle": True,
         "Name": "Large Now Playing",
         "Plugin": {"Name": "Media Control for D200",
-                    "UUID": "com.arkamax404.ulanzi.mediacontrol", "Version": "2.1.0"},
+                    "UUID": "com.arkamax404.ulanzi.mediacontrol", "Version": "2.1.1"},
         "State": 0,
         "ViewParam": [{"Icon": "", "IconRel": "", "Name": "Large Now Playing"}],
     }

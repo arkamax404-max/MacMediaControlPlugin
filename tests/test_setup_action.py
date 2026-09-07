@@ -37,7 +37,7 @@ def fixture(root: Path, center=BUILTIN_UUID, params=None):
         center_entry.update({
             "LinkedTitle": True, "Name": "Large Now Playing", "State": 0,
             "Plugin": {"Name": "Media Control for D200",
-                       "UUID": "com.arkamax404.ulanzi.mediacontrol", "Version": "2.1.0"},
+                       "UUID": "com.arkamax404.ulanzi.mediacontrol", "Version": "2.1.1"},
             "ViewParam": [{"Icon": "", "IconRel": "", "Name": "Large Now Playing"}],
         })
     (page_root / "manifest.json").write_text(json.dumps({"Controllers": [{
