@@ -1,3 +1,4 @@
+import base64
 import inspect
 import json
 import sys
@@ -92,7 +93,10 @@ def inspect_sdk():
     router = TransportRouter(client=probe_client)
     scheduler = ProgressScheduler(api, probe_client, ProgressActionModel(),
                                   NowPlayingActionModel(), ArtworkBundleCache())
-    router.configure_runtime(scheduler.handle_run, scheduler.request_poll)
+    router.configure_runtime(
+        scheduler.handle_run, scheduler.request_poll,
+        scheduler.now_playing_model.secondary_command_from_event,
+    )
     router.start()
     scheduler.start()
     register_transport_handlers(api, router)
@@ -117,12 +121,14 @@ def inspect_sdk():
         raise RuntimeError(f"Unexpected real SDK handler counts: {handler_counts}")
     api.emit("add", {"uuid": ACTION_UUID, "context": context, "param": {}})
     now_context = "now-uuid___now-key___now-action"
-    api.emit("add", {"uuid": NOW_PLAYING_UUID, "context": now_context})
+    api.emit("add", {"uuid": NOW_PLAYING_UUID, "context": now_context,
+                     "param": {"showProgress": True}})
     mosaic_contexts = []
     for index, action in enumerate(MOSAIC_ACTIONS):
         mosaic_context = f"tile-{index}___tile-key-{index}___tile-action-{index}"
         mosaic_contexts.append(mosaic_context)
-        api.emit("add", {"uuid": action, "context": mosaic_context})
+        api.emit("add", {"uuid": action, "context": mosaic_context,
+                         "param": {"secondaryAction": "next" if index == 0 else "none"}})
     audio_contexts = []
     for index, action in enumerate(AUDIO_ACTIONS):
         audio_context = f"audio-{index}___audio-key-{index}___audio-action-{index}"
@@ -167,9 +173,18 @@ def inspect_sdk():
     if ([item.get("type") for item in now_items] != [2, 1]
             or now_items[0].get("path") != "./assets/music.svg"
             or now_items[0].get("textData") != "Track\nArtist"
-            or now_items[1].get("data") != "data:image/png;base64,color"
+            or not now_items[1].get("data", "").startswith("data:image/svg+xml;base64,")
             or now_items[1].get("textData") != "Track\nArtist"):
         raise RuntimeError(f"Unexpected integrated Now Playing payloads: {now_items}")
+    try:
+        now_svg = base64.b64decode(
+            now_items[-1]["data"].split(",", 1)[1]).decode("utf-8")
+    except Exception as exc:
+        raise RuntimeError("Integrated Now Playing artwork overlay is missing") from exc
+    if ('<circle cx="168" cy="28" r="18" fill="#1DB954"/>' not in now_svg
+            or not any(f'href="data:image/png;base64,{variant}"' in now_svg
+                       for variant in ("color", "gray"))):
+        raise RuntimeError(f"Unexpected integrated Now Playing artwork overlay: {now_items}")
     mosaic_payloads = []
     for index, context_value in enumerate(mosaic_contexts):
         uuid, key, actionid = context_value.split("___")
@@ -207,11 +222,12 @@ def inspect_sdk():
     api.emit("run", {"uuid": NOW_PLAYING_UUID, "context": now_context})
     api.emit("run", {"uuid": MUTE_TOGGLE_UUID, "context": audio_contexts[2]})
     api.emit("run", {"uuid": TOGGLE_UUID, "context": transport_contexts[0]})
+    api.emit("run", {"uuid": next(iter(MOSAIC_ACTIONS)), "context": mosaic_contexts[0]})
     callback_seconds = time.monotonic() - started_at
     if callback_seconds >= 0.25 or not probe_client.completed.wait(1):
         raise RuntimeError(f"Real SDK run callback blocked: {callback_seconds:.6f}s")
     expected_commands = ["previous", "volume-up", "volume-up", "volume-up", "toggle",
-                         "mute-toggle", "toggle"]
+                         "mute-toggle", "toggle", "next"]
     if probe_client.commands != expected_commands:
         raise RuntimeError(f"Unexpected real SDK routing: {probe_client.commands}")
     def state_items():

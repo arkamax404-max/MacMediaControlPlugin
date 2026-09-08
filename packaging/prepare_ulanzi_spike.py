@@ -29,6 +29,13 @@ PROPERTY_INSPECTOR_FILES = (
     "property-inspector/volume-down/inspector.html",
     "property-inspector/mute/inspector.html",
     "property-inspector/shared/icon-color.js",
+    "property-inspector/nowplaying/inspector.html",
+    "property-inspector/nowplaying/inspector.js",
+    "property-inspector/artwork-tile/top-left.html",
+    "property-inspector/artwork-tile/top-right.html",
+    "property-inspector/artwork-tile/bottom-left.html",
+    "property-inspector/artwork-tile/bottom-right.html",
+    "property-inspector/artwork-tile/inspector.js",
 )
 PROPERTY_INSPECTORS = {
     "property-inspector/progress/inspector.html": "property-inspector/progress/inspector.js",
@@ -40,6 +47,11 @@ PROPERTY_INSPECTORS = {
     "property-inspector/volume-up/inspector.html": "property-inspector/shared/icon-color.js",
     "property-inspector/volume-down/inspector.html": "property-inspector/shared/icon-color.js",
     "property-inspector/mute/inspector.html": "property-inspector/shared/icon-color.js",
+    "property-inspector/nowplaying/inspector.html": "property-inspector/nowplaying/inspector.js",
+    "property-inspector/artwork-tile/top-left.html": "property-inspector/artwork-tile/inspector.js",
+    "property-inspector/artwork-tile/top-right.html": "property-inspector/artwork-tile/inspector.js",
+    "property-inspector/artwork-tile/bottom-left.html": "property-inspector/artwork-tile/inspector.js",
+    "property-inspector/artwork-tile/bottom-right.html": "property-inspector/artwork-tile/inspector.js",
 }
 HELPER_FILES = (
     "helper/Invoke-MediaControlSetup.mjs",
@@ -239,6 +251,11 @@ def prepare_package(plugin_source, runtime_bundle, output_root, repo_root):
         "volume-up": "property-inspector/volume-up/inspector.html",
         "volume-down": "property-inspector/volume-down/inspector.html",
         "mute-toggle": "property-inspector/mute/inspector.html",
+        "nowplaying": "property-inspector/nowplaying/inspector.html",
+        "artwork-top-left": "property-inspector/artwork-tile/top-left.html",
+        "artwork-top-right": "property-inspector/artwork-tile/top-right.html",
+        "artwork-bottom-left": "property-inspector/artwork-tile/bottom-left.html",
+        "artwork-bottom-right": "property-inspector/artwork-tile/bottom-right.html",
     }
     for suffix, expected_path in inspector_actions.items():
         action = next(item for item in manifest["Actions"]

@@ -12,12 +12,14 @@ from math import isfinite, isnan
 from typing import Callable
 
 from artwork_bundle import ARTWORK_ID_PATTERN, ArtworkBundle
+from progress_state import ProgressState, extrapolate_position
 
 
 ACTION_UUID = "com.arkamax404.ulanzi.mediacontrol.nowplaying"
 MUTE_TOGGLE_UUID = "com.arkamax404.ulanzi.mediacontrol.mute-toggle"
 DEFAULT_ICON_COLOR = "#1DB954"
 COLOR_PATTERN = re.compile(r"#[0-9A-Fa-f]{6}")
+PNG_DATA_URI_PATTERN = re.compile(r"data:image/png;base64,[A-Za-z0-9+/]+={0,2}")
 MOSAIC_ACTIONS = {
     "com.arkamax404.ulanzi.mediacontrol.artwork-top-left":
         (0, "./assets/artwork-top-left.svg", "Artwork Top Left"),
@@ -41,7 +43,10 @@ TRANSPORT_DISPLAY = {
     PREVIOUS_UUID: "./assets/previous.svg",
     NEXT_UUID: "./assets/next.svg",
 }
+SECONDARY_ACTIONS = frozenset(("none", "previous", "toggle", "next",
+                               "volume-up", "volume-down", "mute-toggle"))
 COLOR_ACTIONS = frozenset((*AUDIO_ACTIONS, *TRANSPORT_DISPLAY))
+SETTINGS_ACTIONS = frozenset((*COLOR_ACTIONS, *MOSAIC_ACTIONS, ACTION_UUID))
 DISPLAY_ACTION_UUIDS = frozenset((ACTION_UUID, *MOSAIC_ACTIONS, *AUDIO_ACTIONS,
                                   *TRANSPORT_DISPLAY))
 STATE_MAX_AGE_SECONDS = 15
@@ -111,7 +116,10 @@ class ContextView:
     generation: int
     version: int
     active: bool
+    action: str
     icon_color: str
+    show_progress: bool
+    secondary_action: str
 
 
 @dataclass
@@ -122,6 +130,8 @@ class _Context:
     active: bool = True
     committed_signature: tuple[str, str, str] | None = None
     icon_color: str = DEFAULT_ICON_COLOR
+    show_progress: bool = True
+    secondary_action: str = "none"
     persistence_pending: bool = False
     persistence_attempts: int = 0
 
@@ -182,8 +192,24 @@ def normalize_icon_color(value: object) -> str:
         else DEFAULT_ICON_COLOR
 
 
-def icon_settings_match(raw: object, color: str) -> bool:
-    return isinstance(raw, Mapping) and raw.get("iconColor") == color
+def normalize_secondary_action(value: object) -> str:
+    return value if isinstance(value, str) and value in SECONDARY_ACTIONS else "none"
+
+
+def context_settings_payload(entry: _Context) -> dict[str, object]:
+    if entry.action in COLOR_ACTIONS:
+        return {"iconColor": entry.icon_color}
+    if entry.action == ACTION_UUID:
+        return {"showProgress": entry.show_progress}
+    if entry.action in MOSAIC_ACTIONS:
+        return {"secondaryAction": entry.secondary_action}
+    return {}
+
+
+def context_settings_match(raw: object, entry: _Context) -> bool:
+    return isinstance(raw, Mapping) and all(
+        raw.get(name) == value for name, value in context_settings_payload(entry).items()
+    )
 
 
 def render_audio_icon_svg(action: str, color: str = DEFAULT_ICON_COLOR) -> str:
@@ -242,6 +268,44 @@ def transport_icon_data_uri(action: str, playing: bool = False,
     return "data:image/svg+xml;base64," + base64.b64encode(svg.encode("utf-8")).decode("ascii")
 
 
+def render_now_playing_artwork_svg(
+    artwork: str,
+    playing: bool,
+    progress: ProgressState | None = None,
+    clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+    show_progress: bool = True,
+) -> str:
+    if not isinstance(artwork, str) or not PNG_DATA_URI_PATTERN.fullmatch(artwork):
+        return ""
+    glyph = ('<path d="M162 19l14 9-14 9z" fill="#FFFFFF"/>' if playing else
+             '<path d="M161 19h5v18h-5zm10 0h5v18h-5z" fill="#FFFFFF"/>')
+    progress_bar = ""
+    if show_progress and isinstance(progress, ProgressState) and progress.timeline_available:
+        ratio = (extrapolate_position(progress, clock) / progress.duration_seconds
+                 if progress.duration_seconds > 0 else 0.0)
+        width = max(0.0, min(196.0, 196.0 * ratio))
+        progress_bar = (
+            '<rect x="0" y="189" width="196" height="7" '
+            'fill="#121212" opacity="0.72"/>'
+            f'<rect x="0" y="189" width="{width:.3f}" height="7" fill="#1DB954"/>'
+        )
+    return ('<svg xmlns="http://www.w3.org/2000/svg" width="196" height="196" '
+            'viewBox="0 0 196 196">'
+            f'<image width="196" height="196" href="{artwork}"/>'
+            f'<circle cx="168" cy="28" r="18" fill="#1DB954"/>{glyph}{progress_bar}</svg>')
+
+
+def now_playing_artwork_data_uri(
+    artwork: str,
+    playing: bool,
+    progress: ProgressState | None = None,
+    clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+    show_progress: bool = True,
+) -> str:
+    svg = render_now_playing_artwork_svg(artwork, playing, progress, clock, show_progress)
+    return "data:image/svg+xml;base64," + base64.b64encode(svg.encode("utf-8")).decode("ascii")
+
+
 class NowPlayingActionModel:
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -256,7 +320,8 @@ class NowPlayingActionModel:
         with self._lock:
             entry = self._contexts.get(context)
             return (ContextView(context, entry.generation, entry.version, entry.active,
-                                entry.icon_color)
+                                entry.action, entry.icon_color, entry.show_progress,
+                                entry.secondary_action)
                     if entry else None)
 
     def add(self, event: object) -> tuple[RenderRequest, ...]:
@@ -267,15 +332,20 @@ class NowPlayingActionModel:
         icon_color = (normalize_icon_color(raw.get("iconColor"))
                       if action in COLOR_ACTIONS and isinstance(raw, Mapping)
                       else DEFAULT_ICON_COLOR)
+        show_progress = (raw.get("showProgress") is not False
+                         if action == ACTION_UUID and isinstance(raw, Mapping) else True)
+        secondary_action = (normalize_secondary_action(raw.get("secondaryAction"))
+                            if action in MOSAIC_ACTIONS and isinstance(raw, Mapping)
+                            else "none")
         with self._lock:
             if self._shutdown:
                 return ()
             self._next_generation += 1
-            entry = _Context(
-                self._next_generation, action, icon_color=icon_color,
-                persistence_pending=(action in COLOR_ACTIONS
-                                     and not icon_settings_match(raw, icon_color)),
-            )
+            entry = _Context(self._next_generation, action, icon_color=icon_color,
+                             show_progress=show_progress,
+                             secondary_action=secondary_action)
+            entry.persistence_pending = (action in SETTINGS_ACTIONS
+                                         and not context_settings_match(raw, entry))
             self._contexts[context] = entry
             return (self._request(context, entry),)
 
@@ -322,14 +392,19 @@ class NowPlayingActionModel:
         raw = event.get("settings", event.get("param"))
         if context is None or not isinstance(raw, Mapping):
             return ()
-        icon_color = normalize_icon_color(raw.get("iconColor"))
         with self._lock:
             entry = self._contexts.get(context)
-            if self._shutdown or entry is None or entry.action not in COLOR_ACTIONS:
+            if self._shutdown or entry is None or entry.action not in SETTINGS_ACTIONS:
                 return ()
-            changed = entry.icon_color != icon_color
-            entry.icon_color = icon_color
-            entry.persistence_pending = persist or not icon_settings_match(raw, icon_color)
+            before = (entry.icon_color, entry.show_progress, entry.secondary_action)
+            if entry.action in COLOR_ACTIONS:
+                entry.icon_color = normalize_icon_color(raw.get("iconColor"))
+            elif entry.action == ACTION_UUID:
+                entry.show_progress = raw.get("showProgress") is not False
+            else:
+                entry.secondary_action = normalize_secondary_action(raw.get("secondaryAction"))
+            changed = before != (entry.icon_color, entry.show_progress, entry.secondary_action)
+            entry.persistence_pending = persist or not context_settings_match(raw, entry)
             entry.persistence_attempts = 0
             if changed:
                 entry.version += 1
@@ -346,7 +421,7 @@ class NowPlayingActionModel:
         with self._lock:
             return tuple(
                 PersistenceRequest(context, entry.generation, entry.version,
-                                   {"iconColor": entry.icon_color})
+                                   context_settings_payload(entry))
                 for context, entry in self._contexts.items()
                 if entry.active and entry.persistence_pending
             )
@@ -370,8 +445,32 @@ class NowPlayingActionModel:
                 entry.persistence_pending = False
             return True
 
+    def secondary_command_from_event(self, event: object) -> str | None:
+        if not isinstance(event, Mapping):
+            return None
+        context = _identity(event.get("context"))
+        declared_present = "uuid" in event or "action" in event
+        declared_action = event.get("uuid", event.get("action"))
+        if context is None:
+            return None
+        with self._lock:
+            entry = self._contexts.get(context)
+            return (entry.secondary_action if entry and entry.action in MOSAIC_ACTIONS
+                    and entry.active
+                    and (not declared_present or type(declared_action) is str
+                         and declared_action == entry.action)
+                    and entry.secondary_action != "none" else None)
+
+    def artwork_progress_active(self) -> bool:
+        with self._lock:
+            return any(entry.active and entry.action == ACTION_UUID and entry.show_progress
+                       for entry in self._contexts.values())
+
     def render(self, request: RenderRequest, snapshot: MediaSnapshot,
-               bundle: ArtworkBundle | None = None) -> RenderIntent | None:
+               bundle: ArtworkBundle | None = None,
+               progress: ProgressState | None = None,
+               clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc)) \
+            -> RenderIntent | None:
         if not isinstance(request, RenderRequest) or not isinstance(snapshot, MediaSnapshot):
             return None
         request = _canonical_request(request)
@@ -381,6 +480,7 @@ class NowPlayingActionModel:
             entry = self._matching(request)
             action = entry.action if entry and entry.active else None
             icon_color = entry.icon_color if entry else DEFAULT_ICON_COLOR
+            show_progress = entry.show_progress if entry else True
         if action is None:
             return None
         online, available = snapshot.online, snapshot.available
@@ -425,7 +525,10 @@ class NowPlayingActionModel:
             method, image = "setPathIcon", OFFLINE_ICON
             text = STATUS_LABELS.get(status, "Offline")
         elif matching:
-            method, image = "setBaseDataIcon", bundle.color if playing else bundle.grayscale
+            artwork = bundle.color if playing else bundle.grayscale
+            method = "setBaseDataIcon"
+            image = now_playing_artwork_data_uri(
+                artwork, playing, progress, clock, show_progress=show_progress)
         else:
             method, image = "setPathIcon", MUSIC_ICON
         signature = (method, image, text)

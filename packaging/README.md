@@ -27,7 +27,7 @@ The source manifest keeps `src/app.js` for development. The projected manifest u
 `src/launcher.js`, which starts its bundled local D200 bridge through the extensionless
 `runtime/MediaControlRuntime` target built by `ulanzi_runtime.spec`. Preparation rejects symlinks, unexpected runtime root entries,
 non-macOS binary suffixes, missing licenses, unsafe asset paths, and a changed action
-UUID inventory. It copies every referenced action asset, the three approved property
+UUID inventory. It copies every referenced action asset, the approved property
 inspectors with their required SDK scripts, and the explicit macOS Setup helper and
 compatibility manifest allowlist. The launcher passes its trusted `process.execPath`
 and packaged plugin root to the Python runtime; source `src/app.js` does not expose

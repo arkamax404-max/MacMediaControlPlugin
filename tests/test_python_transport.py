@@ -342,6 +342,25 @@ class PythonTransportTests(unittest.TestCase):
         ], "poll must follow every successful command and skip failures")
         self.assertTrue(router.stop())
 
+    def test_router_queues_secondary_tile_commands_without_audio_target(self):
+        class Client:
+            def __init__(self): self.commands = []
+            def execute(self, command, cancelled=None):
+                self.commands.append(command); return BridgeResult(command, "ok")
+
+        client = Client()
+        router = TransportRouter(client)
+        router.configure_runtime(
+            lambda _event: False, lambda: None,
+            lambda event: "mute-toggle" if event.get("context") == "tile" else None,
+        )
+        router.start()
+        self.assertTrue(router.handle_run({
+            "uuid": f"{PLUGIN_UUID}.artwork-top-left", "context": "tile",
+        }))
+        self.assertTrue(wait_for(lambda: client.commands == ["mute-toggle"]))
+        self.assertTrue(router.stop())
+
     def test_bridge_client_matches_health_auth_and_command_contract(self):
         for command in ("previous", "toggle", "next", "volume-up", "volume-down", "mute-toggle"):
             with self.subTest(command=command):

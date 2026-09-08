@@ -64,6 +64,7 @@ class TransportRouter:
         self._accepting = False
         self._progress_run = None
         self._poll_notifier = None
+        self._secondary_command_resolver = None
         self._worker = threading.Thread(
             target=self._work,
             name="ulanzi-bridge-transport",
@@ -85,6 +86,11 @@ class TransportRouter:
 
     def handle_run(self, event) -> bool:
         command = command_from_event(event)
+        if command is None and self._secondary_command_resolver is not None:
+            try:
+                command = self._secondary_command_resolver(event)
+            except Exception:
+                command = None
         if command is None:
             try:
                 return bool(self._progress_run and self._progress_run(event))
@@ -107,10 +113,12 @@ class TransportRouter:
             self.last_enqueue_result = BridgeResult(command, "queued")
             return True
 
-    def configure_runtime(self, progress_run, poll_notifier) -> None:
+    def configure_runtime(self, progress_run, poll_notifier,
+                          secondary_command_resolver=None) -> None:
         with self._state_lock:
             self._progress_run = progress_run
             self._poll_notifier = poll_notifier
+            self._secondary_command_resolver = secondary_command_resolver
 
     def stop(self, timeout: float = WORKER_STOP_TIMEOUT_SECONDS) -> bool:
         with self._state_lock:

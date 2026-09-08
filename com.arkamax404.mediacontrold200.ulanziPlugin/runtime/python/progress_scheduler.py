@@ -265,14 +265,14 @@ class ProgressScheduler:
                 self._retry = self._render_all(requests, state) or persistence_retry
             media_state = self._media_state
             if media_state is not None and (media_changed or artwork_changed
-                                            or dirty or self._now_retry):
+                                            or tick or dirty or self._now_retry):
                 persistence_retry = self._persist_model(
                     self.now_playing_model,
                     self.now_playing_model.persistence_requests())
                 self._now_retry = self._render_now_all(
                     now_requests, media_state,
                     self.artwork_cache.get(media_state.artwork_id)
-                    if media_state.artwork_id else None) or persistence_retry
+                    if media_state.artwork_id else None, state) or persistence_retry
             if (media_state is not None and state is not None
                     and (media_changed or artwork_changed or changed or tick or dirty
                          or self._large_retry)):
@@ -294,7 +294,11 @@ class ProgressScheduler:
                 if reservation is not None:
                     self._fetch_artwork(media_state, reservation)
             now = self._monotonic()
-            playing = ((requests or large_requests) and state and state.timeline_available
+            artwork_progress = (self.now_playing_model.artwork_progress_active()
+                                and media_state is not None and media_state.artwork_id is not None
+                                and self.artwork_cache.get(media_state.artwork_id) is not None)
+            playing = ((requests or large_requests or artwork_progress)
+                       and state and state.timeline_available
                        and state.is_playing
                        and extrapolate_position(state, self._clock) < state.duration_seconds)
             if playing and (tick or self._next_tick is None):
@@ -346,14 +350,16 @@ class ProgressScheduler:
                 retry = True
         return retry
 
-    def _render_now_all(self, requests, state: MediaSnapshot, bundle) -> bool:
+    def _render_now_all(self, requests, state: MediaSnapshot, bundle,
+                        progress: ProgressState | None = None) -> bool:
         retry = False
         for request in requests:
             intent = None
             if self._stop.is_set():
                 return retry
             try:
-                intent = self.now_playing_model.render(request, state, bundle)
+                intent = self.now_playing_model.render(
+                    request, state, bundle, progress, self._clock)
                 if intent is None or not self.now_playing_model.reserve_send(intent):
                     continue
                 sender = (self.api.setBaseDataIcon if intent.method == "setBaseDataIcon"
@@ -384,7 +390,8 @@ class ProgressScheduler:
                 or media_state.artwork_id != artwork_id or not (relevant or relevant_large)):
             return
         if relevant:
-            self._now_retry = self._render_now_all(relevant, media_state, result.bundle)
+            self._now_retry = self._render_now_all(
+                relevant, media_state, result.bundle, self._state)
         if relevant_large and self._state is not None:
             self._large_retry = self._render_large_all(
                 relevant_large, media_state, self._state, result.bundle)

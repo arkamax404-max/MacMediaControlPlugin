@@ -2,6 +2,8 @@
 
 Media Control for D200 is a macOS-only, local companion and Ulanzi Studio plugin for a D200. It displays the current media title, artist, artwork, and progress; sends generic media transport commands; and controls the macOS output volume and mute state. All bridge traffic stays on `127.0.0.1`; no cloud service, account, remote binding, or device discovery is used.
 
+> **Final Media Center release:** v2.3.0 completes the planned Media Center feature set: configurable control colors, artwork playback state and progress, actionable artwork tiles, and the large center display. Future releases, if needed, are maintenance updates rather than planned Media Center expansion.
+
 > **Validation status:** local v2.1.0 package, Ulanzi Studio, and physical D200 validation succeeded on the tested setup. The implementation uses macOS MediaRemote for current-media data; because MediaRemote is a private framework, compatibility is not guaranteed by Apple. Signing, notarization, marketplace publication or acceptance, and compatibility across other macOS, Studio, or device versions remain unproven.
 
 ## Released package setup
@@ -21,6 +23,14 @@ Import the released package into Ulanzi Studio and assign actions from **Media C
 Setup supports the macOS `ProfilesV2` store only. It identifies the active page from the Setup action UUID and its instance `ActionID`, then modifies only center key `3_2`. Install and repair use a hashed, expiring request, a byte-for-byte backup, atomic replacement, readback, and a receipt. Restore accepts only the matching backup lineage and the bounded Studio normalization documented by the implementation; unrelated edits fail closed. The backup is the authority for restoration.
 
 The large view shows artwork, title, artist, playback state, and timeline progress. Ulanzi Studio may retain its macOS clock overlay because Studio can ignore the action's large-view field.
+
+### Customize media controls
+
+1. Select Previous, Play/Pause, Next, Volume Up, Volume Down, or Mute Toggle to choose an independent icon color.
+2. Select Now Playing to show or hide its 7 px bottom progress bar. The playback-state badge always remains visible when artwork is available.
+3. Select any artwork tile to choose its **On press** action: None, Previous, Play/Pause, Next, Volume Up, Volume Down, or Mute Toggle.
+
+Tile actions do not replace the live 2×2 artwork mosaic. Volume and mute always control the Mac's system output; macOS does not expose the Windows-only per-source selector used by the GSMTC edition.
 
 ## Source and build prerequisites
 
@@ -53,18 +63,20 @@ The bridge stores its token at `~/Library/Application Support/GSMTCD200Controlle
 
 | Action | Behavior |
 |---|---|
-| Now Playing | Shows current artwork, title, and artist; press to toggle playback. |
+| Now Playing | Shows current artwork, title, artist, playback badge, and optional 7 px bottom progress bar; press to toggle playback. |
 | Previous / Play-Pause / Next | Sends the corresponding generic current-media transport command. |
 | Volume Up / Volume Down | Changes the macOS system output volume by 5 percentage points. |
 | Mute Toggle | Toggles the macOS system output mute state. |
 | Track Progress | Shows progress; press to cycle remaining, elapsed, and total time. |
-| Artwork Top Left / Top Right / Bottom Left / Bottom Right | Shows one display-only quadrant of the current artwork. |
+| Artwork Top Left / Top Right / Bottom Left / Bottom Right | Shows one artwork quadrant and can run an optional media or system-volume action when pressed. |
 | Large Now Playing | Shows current playback on the large center display at key `3_2`. |
 | Setup Large Display | Safely installs, repairs, or restores the center assignment. |
 
 Artwork uses the current media source when MediaRemote provides it, with the bundled music icon as a fallback. The four artwork actions form a 2×2 mosaic when placed together. Volume and mute apply to the Mac's output, not to one application.
 
 Previous, Play/Pause, Next, Volume Up, Volume Down, and Mute Toggle each provide an independent icon color setting. Existing profiles retain the default `#1DB954` color.
+
+Each artwork tile can independently run None, Previous, Play/Pause, Next, Volume Up, Volume Down, or Mute Toggle without replacing its live artwork quadrant. Audio actions always target the Mac's system output.
 
 ## Architecture
 
