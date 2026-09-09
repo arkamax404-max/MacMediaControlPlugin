@@ -1,12 +1,48 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { readFileSync } from "node:fs";
+import fs, {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import { createLauncher, runtimePaths } from "../src/launcher.js";
 
-function fixture({ argv = ["node", "launcher.js", "127.0.0.1", "3906", "en"] } = {}) {
+function safeRuntimeFs() {
+  const entries = new Map();
+  const stats = (target) => {
+    if (!entries.has(target)) entries.set(target, { dev: 1, ino: entries.size + 1 });
+    return {
+      ...entries.get(target),
+      mode: 0o100755,
+      isFile: () => true,
+      isSymbolicLink: () => false,
+    };
+  };
+  return {
+    constants: { O_RDONLY: 0, O_NOFOLLOW: 1, O_NONBLOCK: 2 },
+    lstatSync: stats,
+    openSync: (target) => target,
+    fstatSync: stats,
+    fchmodSync: () => {},
+    closeSync: () => {},
+  };
+}
+
+function fixture({
+  argv = ["node", "launcher.js", "127.0.0.1", "3906", "en"],
+  baseDirectory = "/Applications/Ulanzi Studio/plugin/src",
+  fsImpl = safeRuntimeFs(),
+  onSpawn = () => {},
+} = {}) {
   const stdin = new EventEmitter();
   const processImpl = Object.assign(new EventEmitter(), {
     argv,
@@ -25,18 +61,76 @@ function fixture({ argv = ["node", "launcher.js", "127.0.0.1", "3906", "en"] } =
     kill(signal) { this.signals.push(signal); return true; },
   });
   const calls = [];
-  const spawnImpl = (...args) => { calls.push(args); return child; };
+  const spawnImpl = (...args) => { onSpawn(...args); calls.push(args); return child; };
   const propagated = [];
   const errors = [];
   const launcher = createLauncher({
     spawnImpl,
+    fsImpl,
     processImpl,
-    baseDirectory: "/Applications/Ulanzi Studio/plugin/src",
+    baseDirectory,
     propagateSignal: (signal) => propagated.push(signal),
     consoleImpl: { error: (message) => errors.push(message) },
   });
   return { calls, child, errors, launcher, processImpl, propagated };
 }
+
+function runtimeFixture(t) {
+  const pluginRoot = mkdtempSync(path.join(tmpdir(), "media-control-launcher-"));
+  t.after(() => rmSync(pluginRoot, { recursive: true, force: true }));
+  const baseDirectory = path.join(pluginRoot, "src");
+  const runtimeDirectory = path.join(pluginRoot, "runtime");
+  mkdirSync(baseDirectory);
+  mkdirSync(runtimeDirectory);
+  return { baseDirectory, runtimeDirectory };
+}
+
+test("repairs mode-stripped regular runtime executables before spawn", (t) => {
+  const { baseDirectory, runtimeDirectory } = runtimeFixture(t);
+  const executable = path.join(runtimeDirectory, "MediaControlRuntime");
+  const helper = path.join(runtimeDirectory, "MediaRemoteHelper");
+  for (const target of [executable, helper]) {
+    writeFileSync(target, "runtime");
+    chmodSync(target, 0o666);
+  }
+  const modesAtSpawn = [];
+  const state = fixture({
+    baseDirectory,
+    fsImpl: fs,
+    onSpawn: () => modesAtSpawn.push(
+      statSync(executable).mode & 0o777,
+      statSync(helper).mode & 0o777,
+    ),
+  });
+
+  state.launcher.launch();
+
+  assert.deepEqual(modesAtSpawn, [0o755, 0o755]);
+  assert.equal(state.calls.length, 1);
+});
+
+test("fails closed without repairing or spawning when a runtime target is unsafe", (t) => {
+  for (const unsafeName of ["MediaControlRuntime", "MediaRemoteHelper"]) {
+    for (const unsafeKind of ["symlink", "directory"]) {
+      const { baseDirectory, runtimeDirectory } = runtimeFixture(t);
+      const unsafeTarget = path.join(runtimeDirectory, unsafeName);
+      const safeTarget = path.join(
+        runtimeDirectory,
+        unsafeName === "MediaControlRuntime" ? "MediaRemoteHelper" : "MediaControlRuntime",
+      );
+      writeFileSync(safeTarget, "runtime");
+      chmodSync(safeTarget, 0o666);
+      if (unsafeKind === "symlink") symlinkSync(safeTarget, unsafeTarget);
+      else mkdirSync(unsafeTarget);
+      const state = fixture({ baseDirectory, fsImpl: fs });
+
+      assert.equal(state.launcher.launch(), null);
+      assert.equal(state.calls.length, 0);
+      assert.equal(statSync(safeTarget).mode & 0o777, 0o666);
+      assert.match(state.errors[0], /Unsafe runtime executable target/);
+    }
+  }
+});
 
 test("forwards exact host arguments and uses safe spawn options", () => {
   const hostArgs = ["127.0.0.1", "3906", "zh-CN", "--future=value with spaces", "quoted\"value"];
@@ -97,6 +191,7 @@ test("reports synchronous spawn failure without registering lifecycle handlers",
   const state = fixture();
   const launcher = createLauncher({
     spawnImpl: () => { throw new Error("blocked"); },
+    fsImpl: safeRuntimeFs(),
     processImpl: state.processImpl,
     consoleImpl: { error: (message) => state.errors.push(message) },
   });
