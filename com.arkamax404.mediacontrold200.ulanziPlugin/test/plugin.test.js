@@ -1421,7 +1421,7 @@ test("manifest declares approved identity, functional entrypoint, and unique act
   assert.equal(manifest.Category, "Media Control for D200");
   assert.equal(manifest.UUID, "com.arkamax404.ulanzi.mediacontrol");
   assert.equal(manifest.CodePath, "src/app.js");
-  assert.equal(manifest.Version, "2.3.2");
+  assert.equal(manifest.Version, "2.3.3");
   assert.equal(manifest.Description, "macOS local media controls with automatic bundled D200 bridge startup");
   assert.deepEqual(manifest.OS, [{ Platform: "macos", MinimumVersion: "13" }]);
   const inspectors = Object.fromEntries(manifest.Actions.map((action) => [

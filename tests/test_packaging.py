@@ -61,6 +61,23 @@ def add_pyinstaller_macos_dylib_alias(root, name="libXau.6.dylib", target="PIL/.
 
 
 class PackagingContractTests(unittest.TestCase):
+    def test_release_metadata_is_consistently_v2_3_3(self):
+        plugin = ROOT / "com.arkamax404.mediacontrold200.ulanziPlugin"
+        manifest = json.loads((plugin / "manifest.json").read_text("utf-8"))
+        package = json.loads((plugin / "package.json").read_text("utf-8"))
+        package_lock = json.loads((plugin / "package-lock.json").read_text("utf-8"))
+        helper = (plugin / "helper" / "Invoke-MediaControlSetup.mjs").read_text("utf-8")
+        setup_action = (plugin / "runtime" / "python" / "setup_action.py").read_text("utf-8")
+        companion_version = (ROOT / "d200_bridge" / "version.py").read_text("utf-8")
+
+        self.assertEqual(manifest["Version"], "2.3.3")
+        self.assertEqual(package["version"], "2.3.3")
+        self.assertEqual(package_lock["version"], "2.3.3")
+        self.assertEqual(package_lock["packages"][""]["version"], "2.3.3")
+        self.assertIn('const VERSION = "2.3.3";', helper)
+        self.assertIn('"Version": "2.3.3"', setup_action)
+        self.assertEqual(companion_version.splitlines()[0], 'COMPANION_VERSION = "2.3.3"')
+
     def test_macos_build_contract_uses_extensionless_launcher_runtime(self):
         build = (PACKAGING / "build_ulanzi_runtime_macos.sh").read_text("utf-8")
         spec = (PACKAGING / "ulanzi_runtime.spec").read_text("utf-8")
@@ -98,9 +115,14 @@ class PackagingContractTests(unittest.TestCase):
         artwork = (ROOT / "d200_bridge" / "artwork.py").read_text("utf-8")
         spec = (PACKAGING / "ulanzi_runtime.spec").read_text("utf-8")
         lock = (PACKAGING / "requirements-ulanzi-runtime.lock").read_text("utf-8")
+        pillow = next(line for line in lock.splitlines() if line.startswith("Pillow==11.3.0 "))
 
         self.assertIn("from PIL import Image, ImageOps", artwork)
         self.assertRegex(lock, r"(?m)^Pillow==[^\s]+(?:\s+--hash=sha256:[0-9a-f]{64})+$")
+        self.assertIn(
+            "--hash=sha256:1cd110edf822773368b396281a2293aeb91c90a2db00d78ea43e7e861631b722",
+            pillow,
+        )
         self.assertIn('collect_submodules("d200_bridge")', spec)
         self.assertIn('"PIL"', spec)
         self.assertNotRegex(spec, r"excludes\s*=\s*\[[^]]*['\"]PIL['\"]")
