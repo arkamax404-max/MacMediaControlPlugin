@@ -2,6 +2,7 @@ import argparse
 import json
 import shutil
 import stat
+import subprocess
 from html.parser import HTMLParser
 from pathlib import Path, PurePosixPath
 
@@ -76,6 +77,9 @@ REQUIRED_RUNTIME_FILES = (
 )
 RUNTIME_ROOT_ENTRIES = frozenset(("MediaControlRuntime", "MediaRemoteHelper", "_internal"))
 WINDOWS_RUNTIME_SUFFIXES = (".exe", ".dll", ".pyd")
+LIPO = "/usr/bin/lipo"
+LIPO_TIMEOUT_SECONDS = 10
+LIPO_ARCHITECTURES = frozenset(("arm64", "x86_64"))
 # PyInstaller's macOS framework payload requires one of these closed, relative
 # symlink sets. Python 3.9 names its framework and executable Python3; Python
 # 3.13 names both Python. Internal lib*.dylib aliases are validated separately.
@@ -161,7 +165,54 @@ def inventory_files(root):
     return tuple(files)
 
 
-def validate_runtime_bundle(runtime_bundle):
+def validate_runtime_architecture(runtime_bundle, runner=subprocess.run):
+    required_executables = ("MediaControlRuntime", "MediaRemoteHelper")
+    for name in required_executables:
+        try:
+            result = runner(
+                [LIPO, "-archs", str(runtime_bundle / name)],
+                capture_output=True,
+                text=True,
+                timeout=LIPO_TIMEOUT_SECONDS,
+                check=False,
+                shell=False,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise ValueError(
+                f"{LIPO} timed out inspecting required executable {name}"
+            ) from error
+        except Exception as error:
+            raise ValueError(
+                f"Could not run {LIPO} for required executable {name}: {error}"
+            ) from error
+        if result.returncode != 0:
+            diagnostic = (result.stderr or result.stdout or "no diagnostic output").strip()
+            raise ValueError(
+                f"{LIPO} could not inspect required executable {name} "
+                f"(exit {result.returncode}): {diagnostic}"
+            )
+        if not isinstance(result.stdout, str) or not result.stdout.strip():
+            raise ValueError(f"{LIPO} reported no architectures for required executable {name}")
+        architectures = result.stdout.split()
+        unexpected = [architecture for architecture in architectures
+                      if architecture not in LIPO_ARCHITECTURES]
+        if unexpected or len(architectures) != len(set(architectures)):
+            raise ValueError(
+                f"{LIPO} reported malformed architectures for required executable {name}: "
+                f"{result.stdout.strip()}"
+            )
+        if "x86_64" not in architectures:
+            raise ValueError(f"Required executable {name} is not x86_64-compatible")
+
+
+def validate_no_symlinks(root):
+    links = [candidate.relative_to(root).as_posix() for candidate in root.rglob("*")
+             if candidate.is_symlink()]
+    if links:
+        raise ValueError(f"Projected package contains symbolic links: {', '.join(links)}")
+
+
+def validate_runtime_bundle(runtime_bundle, architecture_runner=subprocess.run):
     if not runtime_bundle.is_dir() or runtime_bundle.is_symlink():
         raise ValueError("Runtime bundle must be a real directory")
     entries = {entry.name for entry in runtime_bundle.iterdir()}
@@ -180,6 +231,7 @@ def validate_runtime_bundle(runtime_bundle):
     windows_files = [name for name in files if name.lower().endswith(WINDOWS_RUNTIME_SUFFIXES)]
     if windows_files:
         raise ValueError("Runtime bundle contains Windows binaries")
+    validate_runtime_architecture(runtime_bundle, runner=architecture_runner)
     return files
 
 
@@ -316,13 +368,14 @@ def prepare_package(plugin_source, runtime_bundle, output_root, repo_root):
         shutil.copy2(plugin_source.joinpath(*path.parts), destination)
     (target / "src").mkdir()
     shutil.copy2(plugin_source / "src" / "launcher.js", target / "src" / "launcher.js")
-    shutil.copytree(runtime_bundle, target / "runtime", symlinks=True)
+    shutil.copytree(runtime_bundle, target / "runtime")
     (target / "manifest.json").write_text(
         json.dumps(manifest, indent=2, ensure_ascii=True) + "\n", "utf-8"
     )
     (target / "package.json").write_text(
         json.dumps(minimal_package, indent=2, ensure_ascii=True) + "\n", "utf-8"
     )
+    validate_no_symlinks(target)
     return target
 
 

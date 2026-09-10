@@ -3,6 +3,7 @@ import json
 import os
 import shutil
 import stat
+import struct
 import subprocess
 import sys
 import tempfile
@@ -14,6 +15,8 @@ from unittest.mock import Mock
 
 ROOT = Path(__file__).parents[1]
 PACKAGING = ROOT / "packaging"
+CPU_TYPE_X86_64 = 0x01000007
+CPU_TYPE_ARM64 = 0x0100000C
 
 
 def load_preparer():
@@ -28,7 +31,11 @@ def create_runtime(root, preparer):
     for relative in preparer.REQUIRED_RUNTIME_FILES:
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(b"runtime" if relative in {"MediaControlRuntime", "MediaRemoteHelper"} else b"license")
+        path.write_bytes(
+            struct.pack("<IiiIIIII", 0xFEEDFACF, CPU_TYPE_X86_64,
+                        3, 2, 0, 0, 0, 0)
+            if relative in {"MediaControlRuntime", "MediaRemoteHelper"} else b"license"
+        )
     for name in ("MediaControlRuntime", "MediaRemoteHelper"):
         executable = root / name
         executable.chmod(executable.stat().st_mode | stat.S_IXUSR)
@@ -77,6 +84,7 @@ class PackagingContractTests(unittest.TestCase):
         self.assertIn('MEDIAREMOTE_HELPER', build)
         self.assertIn('build_mediaremote_helper.py', build)
         self.assertIn('mv "$2/runtime/_internal/MediaRemoteHelper" "$2/runtime/MediaRemoteHelper"', build)
+        self.assertIn('"$(uname -m)" != "x86_64"', build)
         self.assertIn('(str(mediaremote_helper), ".")', spec)
         self.assertIn('packaging" / "licenses" / "cpython" / "LICENSE.txt"', spec)
         self.assertNotIn("sys.base_prefix", spec)
@@ -298,13 +306,202 @@ class PackagingContractTests(unittest.TestCase):
             self.assertTrue((target / "runtime" / "MediaControlRuntime").is_file())
             self.assertTrue((target / "runtime" / "MediaRemoteHelper").is_file())
             self.assertFalse((target / "runtime" / "MediaControlRuntime.exe").exists())
-            self.assertTrue((target / "runtime" / "_internal" / "Python3").is_symlink())
-            self.assertEqual(
-                (target / "runtime" / "_internal" / "Python3").readlink(),
-                Path("Python3.framework/Versions/3.9/Python3"),
-            )
+            self.assertTrue((target / "runtime" / "_internal" / "Python3").is_file())
+            self.assertFalse(any(path.is_symlink() for path in target.rglob("*")))
             self.assertEqual(protected, {name: (plugin / name).read_bytes()
                                          for name in protected})
+
+    def test_runtime_rejects_arm64_only_required_executables(self):
+        preparer = load_preparer()
+        for name in ("MediaControlRuntime", "MediaRemoteHelper"):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                runtime = Path(directory)
+                create_runtime(runtime, preparer)
+                (runtime / name).write_bytes(
+                    struct.pack("<IiiIIIII", 0xFEEDFACF, CPU_TYPE_ARM64,
+                                0, 2, 0, 0, 0, 0)
+                )
+                with self.assertRaisesRegex(ValueError, f"{name} is not x86_64-compatible"):
+                    preparer.validate_runtime_bundle(runtime)
+
+    def test_runtime_rejects_non_macho_required_executables(self):
+        preparer = load_preparer()
+        for name in ("MediaControlRuntime", "MediaRemoteHelper"):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                runtime = Path(directory)
+                create_runtime(runtime, preparer)
+                (runtime / name).write_bytes(b"not Mach-O")
+                with self.assertRaisesRegex(
+                        ValueError, rf"lipo could not inspect required executable {name} \(exit 1\)"):
+                    preparer.validate_runtime_bundle(runtime)
+
+    def test_runtime_rejects_empty_required_executables(self):
+        preparer = load_preparer()
+        for name in ("MediaControlRuntime", "MediaRemoteHelper"):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                runtime = Path(directory)
+                create_runtime(runtime, preparer)
+                (runtime / name).write_bytes(b"")
+                with self.assertRaisesRegex(
+                        ValueError, rf"lipo could not inspect required executable {name} \(exit 1\)"):
+                    preparer.validate_runtime_bundle(runtime)
+
+    def test_runtime_rejects_exact_eight_byte_thin_macho_bypass(self):
+        preparer = load_preparer()
+        payload = struct.pack("<II", 0xFEEDFACF, CPU_TYPE_X86_64)
+        self.assertEqual(len(payload), 8)
+        for name in ("MediaControlRuntime", "MediaRemoteHelper"):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                runtime = Path(directory)
+                create_runtime(runtime, preparer)
+                (runtime / name).write_bytes(payload)
+                with self.assertRaisesRegex(
+                        ValueError, rf"lipo could not inspect required executable {name} \(exit 1\)"):
+                    preparer.validate_runtime_bundle(runtime)
+
+    def test_runtime_rejects_truncated_thin_macho_headers(self):
+        preparer = load_preparer()
+        cases = (
+            ("32-bit little-endian", "<", 0xFEEDFACE, 7, 28),
+            ("32-bit big-endian", ">", 0xFEEDFACE, 7, 28),
+            ("64-bit little-endian", "<", 0xFEEDFACF, CPU_TYPE_X86_64, 32),
+            ("64-bit big-endian", ">", 0xFEEDFACF, CPU_TYPE_X86_64, 32),
+        )
+        for name in ("MediaControlRuntime", "MediaRemoteHelper"):
+            for shape, byte_order, magic, cpu_type, header_size in cases:
+                for truncated_size in (8, header_size - 1):
+                    with (self.subTest(name=name, shape=shape, size=truncated_size),
+                          tempfile.TemporaryDirectory() as directory):
+                        runtime = Path(directory)
+                        create_runtime(runtime, preparer)
+                        truncated_header = (
+                            struct.pack(f"{byte_order}II", magic, cpu_type)
+                            + bytes(truncated_size - 8)
+                        )
+                        self.assertEqual(len(truncated_header), truncated_size)
+                        (runtime / name).write_bytes(truncated_header)
+
+                        with self.assertRaisesRegex(
+                                ValueError,
+                                rf"lipo could not inspect required executable {name} \(exit 1\)"):
+                            preparer.validate_runtime_bundle(runtime)
+
+    def test_runtime_rejects_malformed_truncated_fat_macho_headers(self):
+        preparer = load_preparer()
+        cases = (
+            ("fat32 big-endian", ">", 0xCAFEBABE),
+            ("fat32 little-endian", "<", 0xCAFEBABE),
+            ("fat64 big-endian", ">", 0xCAFEBABF),
+            ("fat64 little-endian", "<", 0xCAFEBABF),
+        )
+        for name in ("MediaControlRuntime", "MediaRemoteHelper"):
+            for shape, byte_order, magic in cases:
+                with (self.subTest(name=name, shape=shape),
+                      tempfile.TemporaryDirectory() as directory):
+                    runtime = Path(directory)
+                    create_runtime(runtime, preparer)
+                    payload = struct.pack(f"{byte_order}III", magic, 1, CPU_TYPE_X86_64)
+                    self.assertEqual(len(payload), 12)
+                    (runtime / name).write_bytes(payload)
+                    with self.assertRaisesRegex(
+                            ValueError,
+                            rf"lipo could not inspect required executable {name} \(exit 1\)"):
+                        preparer.validate_runtime_bundle(runtime)
+
+    def test_runtime_fails_closed_when_lipo_cannot_produce_trusted_architectures(self):
+        preparer = load_preparer()
+        failures = (
+            ("missing", FileNotFoundError("missing"), "Could not run /usr/bin/lipo.*missing"),
+            ("raises", RuntimeError("runner failed"), "Could not run /usr/bin/lipo.*runner failed"),
+            ("timeout", subprocess.TimeoutExpired(preparer.LIPO, 10), "/usr/bin/lipo timed out"),
+            ("nonzero", subprocess.CompletedProcess([], 7, "", "invalid binary"),
+             r"lipo could not inspect.*\(exit 7\): invalid binary"),
+            ("empty", subprocess.CompletedProcess([], 0, "\n", ""),
+             "lipo reported no architectures"),
+            ("unexpected", subprocess.CompletedProcess([], 0, "x86_64 mystery\n", ""),
+             "lipo reported malformed architectures.*x86_64 mystery"),
+            ("duplicate", subprocess.CompletedProcess([], 0, "x86_64 x86_64\n", ""),
+             "lipo reported malformed architectures.*x86_64 x86_64"),
+        )
+        for name in ("MediaControlRuntime", "MediaRemoteHelper"):
+            for case, failure, message in failures:
+                with (self.subTest(name=name, case=case),
+                      tempfile.TemporaryDirectory() as directory):
+                    runtime = Path(directory)
+                    create_runtime(runtime, preparer)
+
+                    def runner(command, **kwargs):
+                        if Path(command[-1]).name == name:
+                            if isinstance(failure, Exception):
+                                raise failure
+                            return failure
+                        return subprocess.CompletedProcess(command, 0, "x86_64\n", "")
+
+                    with self.assertRaisesRegex(ValueError, message):
+                        preparer.validate_runtime_bundle(runtime, architecture_runner=runner)
+
+    @unittest.skipUnless(sys.platform == "darwin", "requires the macOS toolchain")
+    def test_runtime_accepts_real_x86_64_built_required_executables(self):
+        preparer = load_preparer()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime = root / "runtime"
+            create_runtime(runtime, preparer)
+            source = root / "main.c"
+            source.write_text("int main(void) { return 0; }\n", "utf-8")
+            for name in ("MediaControlRuntime", "MediaRemoteHelper"):
+                subprocess.run(
+                    ["/usr/bin/clang", "-arch", "x86_64", str(source),
+                     "-o", str(runtime / name)],
+                    capture_output=True, text=True, timeout=30, check=True,
+                )
+            self.assertEqual(
+                preparer.validate_runtime_bundle(runtime),
+                tuple(sorted(preparer.REQUIRED_RUNTIME_FILES)),
+            )
+
+    def test_runtime_invokes_absolute_lipo_without_a_shell_for_each_required_executable(self):
+        preparer = load_preparer()
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = Path(directory)
+            create_runtime(runtime, preparer)
+            runner = Mock(return_value=subprocess.CompletedProcess([], 0, "x86_64\n", ""))
+
+            preparer.validate_runtime_bundle(runtime, architecture_runner=runner)
+
+            self.assertEqual(runner.call_count, 2)
+            for call, name in zip(runner.call_args_list,
+                                  ("MediaControlRuntime", "MediaRemoteHelper")):
+                self.assertEqual(call.args[0],
+                                 ["/usr/bin/lipo", "-archs", str(runtime / name)])
+                self.assertEqual(call.kwargs, {
+                    "capture_output": True,
+                    "text": True,
+                    "timeout": preparer.LIPO_TIMEOUT_SECONDS,
+                    "check": False,
+                    "shell": False,
+                })
+
+    def test_runtime_accepts_universal_lipo_output_with_x86_64(self):
+        preparer = load_preparer()
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = Path(directory)
+            create_runtime(runtime, preparer)
+            runner = Mock(return_value=subprocess.CompletedProcess(
+                [], 0, "x86_64 arm64\n", ""))
+            self.assertEqual(
+                preparer.validate_runtime_bundle(runtime, architecture_runner=runner),
+                tuple(sorted(preparer.REQUIRED_RUNTIME_FILES)),
+            )
+
+    def test_release_workflow_pins_and_verifies_intel_runner(self):
+        workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text("utf-8")
+        runner = workflow.index("runs-on: macos-15-intel")
+        architecture_check = workflow.index('run: test "$(uname -m)" = x86_64')
+        checkout = workflow.index("uses: actions/checkout@v6")
+
+        self.assertLess(runner, architecture_check)
+        self.assertLess(architecture_check, checkout)
 
     def test_projection_rejects_missing_or_changed_action_inventory(self):
         preparer = load_preparer()

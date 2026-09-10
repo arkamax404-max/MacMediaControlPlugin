@@ -6,6 +6,10 @@ if [ "$(uname -s)" != "Darwin" ]; then
     printf '%s\n' 'macOS runtime builds require Darwin' >&2
     exit 1
 fi
+if [ "$(uname -m)" != "x86_64" ]; then
+    printf '%s\n' 'macOS release runtime builds require an x86_64 host' >&2
+    exit 1
+fi
 
 python3.13 -I -s -m venv "$1/venv"
 PYTHON="$1/venv/bin/python"
