@@ -1,8 +1,8 @@
 {
-  "Version": "2.3.3",
+  "Version": "2.4.0",
   "Author": "Santiago Pérez",
   "Name": "Media Control for D200",
-  "Description": "macOS local media controls with automatic bundled D200 bridge startup",
+  "Description": "Local macOS media display and controls with automatic D200 bridge startup",
   "Icon": "assets/music.svg",
   "Category": "Media Control for D200",
   "CategoryIcon": "assets/music.svg",

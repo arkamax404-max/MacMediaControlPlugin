@@ -32,6 +32,8 @@ from now_playing_action import (  # noqa: E402
     ACTION_UUID,
     AUDIO_ACTIONS,
     DEFAULT_ICON_COLOR,
+    DEFAULT_BADGE_COLOR,
+    DEFAULT_NOW_PLAYING_ACCENT_COLOR,
     DISPLAY_ACTION_UUIDS,
     MOSAIC_ACTIONS,
     MUTE_TOGGLE_UUID,
@@ -44,11 +46,16 @@ from now_playing_action import (  # noqa: E402
     RenderIntent,
     RenderRequest,
     audio_icon_data_uri,
+    artwork_tile_data_uri,
+    normalize_badge_color,
     normalize_icon_color,
     normalize_media_snapshot,
+    normalize_now_playing_accent_color,
     normalize_secondary_action,
     now_playing_artwork_data_uri,
     now_playing_text,
+    render_artwork_tile_svg,
+    render_now_playing_artwork_svg,
     transport_icon_data_uri,
     unavailable_media_snapshot,
 )
@@ -437,6 +444,31 @@ console.log(JSON.stringify(values.map((title) => normalizeBridgeState({ ...base,
         hidden_svg = base64.b64decode(hidden.image.split(",", 1)[1]).decode("utf-8")
         self.assertNotIn('y="189"', hidden_svg)
 
+    def test_configurable_now_playing_accent_normalizes_and_renders(self):
+        self.assertEqual(normalize_now_playing_accent_color("#abcdef"), "#ABCDEF")
+        for invalid in (None, "green", "#123", "#12345678", 123456):
+            self.assertEqual(normalize_now_playing_accent_color(invalid),
+                             DEFAULT_NOW_PLAYING_ACCENT_COLOR)
+        artwork = uri()
+        progress = ProgressState(True, True, True, True, 45, 180, 1, NOW, "ready", "")
+        svg = render_now_playing_artwork_svg(
+            artwork, True, progress, lambda: NOW, True, "#abcdef")
+        self.assertEqual(svg.count('fill="#ABCDEF"'), 2)
+        model = NowPlayingActionModel()
+        request = model.add({
+            "uuid": ACTION_UUID, "context": "accent",
+            "param": {"showProgress": True, "accentColor": "#abcdef"},
+        })[0]
+        self.assertEqual(model.context("accent").accent_color, "#ABCDEF")
+        changed = model.receive_settings({
+            "context": "accent", "settings": {
+                "showProgress": False, "accentColor": "invalid",
+            },
+        })[0]
+        self.assertGreater(changed.version, request.version)
+        self.assertEqual(model.context("accent").accent_color,
+                         DEFAULT_NOW_PLAYING_ACCENT_COLOR)
+
     def test_mosaic_exact_mapping_bytes_fallbacks_and_pause_dedup(self):
         values = [uri(png(idat=bytes((index,)))) for index in range(1, 7)]
         bundle = parse_artwork_bundle(payload(values=values), ARTWORK_ID)
@@ -470,6 +502,22 @@ console.log(JSON.stringify(values.map((title) => normalizeBridgeState({ ...base,
                        for request in fallback_requests]
             self.assertEqual([(item.image, item.text) for item in offline],
                              [("./assets/offline.svg", text)] * 4)
+
+    def test_mosaic_badges_render_action_state_color_and_outer_corners(self):
+        values = [uri(png(idat=bytes((index,)))) for index in range(1, 7)]
+        bundle = parse_artwork_bundle(payload(values=values), ARTWORK_ID)
+        corners = ((22, 22), (174, 22), (22, 174), (174, 174))
+        for (action, tile), (cx, cy) in zip(MOSAIC_ACTIONS.items(), corners):
+            svg = render_artwork_tile_svg(bundle.tiles[tile[0]], action, "next",
+                                          badge_color="#abcdef")
+            self.assertIn(f'<circle cx="{cx}" cy="{cy}" r="18" fill="#ABCDEF"/>', svg)
+        self.assertEqual(normalize_badge_color("#abcdef"), "#ABCDEF")
+        self.assertEqual(normalize_badge_color("invalid"), DEFAULT_BADGE_COLOR)
+        self.assertEqual(artwork_tile_data_uri(
+            bundle.tiles[0], next(iter(MOSAIC_ACTIONS)), "none"), bundle.tiles[0])
+        muted = render_artwork_tile_svg(
+            bundle.tiles[0], next(iter(MOSAIC_ACTIONS)), "mute-toggle", muted=True)
+        self.assertIn("M61 37a19 19 0 0 1 0 26M72 27a33 33 0 0 1 0 46", muted)
 
     def test_mosaic_lifecycle_copies_and_unknown_identity_are_independent(self):
         model = NowPlayingActionModel()

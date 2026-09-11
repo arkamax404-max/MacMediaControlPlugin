@@ -14,6 +14,12 @@ EXPECTED_CONNECT_PARAMETERS = (
 EXPECTED_SET_SETTINGS_PARAMETERS = ("self", "settings", "context")
 EXPECTED_DISPLAY_PARAMETERS = ("self", "context", "data", "text")
 EXPECTED_PATH_PARAMETERS = ("self", "context", "path", "text")
+MINIMAL_PNG_URIS = (
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==",
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNg+M/wHwAEAQH/cetH5QAAAABJRU5ErkJggg==",
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYPj/HwADAgH/5ncLrgAAAABJRU5ErkJggg==",
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4////fwAJ+wP9KobjigAAAABJRU5ErkJggg==",
+)
 
 
 def inspect_sdk():
@@ -86,8 +92,8 @@ def inspect_sdk():
 
         def get_artwork(self, artwork_id, cancelled=None):
             return BridgeArtworkResult("ok", ArtworkBundle(
-                artwork_id, "data:image/png;base64,color", "data:image/png;base64,gray",
-                ("tl", "tr", "bl", "br")), 200)
+                artwork_id, MINIMAL_PNG_URIS[0], MINIMAL_PNG_URIS[3],
+                MINIMAL_PNG_URIS), 200)
 
     probe_client = ProbeClient()
     router = TransportRouter(client=probe_client)
@@ -122,13 +128,15 @@ def inspect_sdk():
     api.emit("add", {"uuid": ACTION_UUID, "context": context, "param": {}})
     now_context = "now-uuid___now-key___now-action"
     api.emit("add", {"uuid": NOW_PLAYING_UUID, "context": now_context,
-                     "param": {"showProgress": True}})
+                     "param": {"showProgress": True, "accentColor": "#ABCDEF"}})
     mosaic_contexts = []
     for index, action in enumerate(MOSAIC_ACTIONS):
         mosaic_context = f"tile-{index}___tile-key-{index}___tile-action-{index}"
         mosaic_contexts.append(mosaic_context)
-        api.emit("add", {"uuid": action, "context": mosaic_context,
-                         "param": {"secondaryAction": "next" if index == 0 else "none"}})
+        api.emit("add", {"uuid": action, "context": mosaic_context, "param": {
+            "secondaryAction": "next" if index == 0 else "none",
+            "badgeColor": "#123456" if index == 0 else "#1DB954",
+        }})
     audio_contexts = []
     for index, action in enumerate(AUDIO_ACTIONS):
         audio_context = f"audio-{index}___audio-key-{index}___audio-action-{index}"
@@ -181,9 +189,9 @@ def inspect_sdk():
             now_items[-1]["data"].split(",", 1)[1]).decode("utf-8")
     except Exception as exc:
         raise RuntimeError("Integrated Now Playing artwork overlay is missing") from exc
-    if ('<circle cx="168" cy="28" r="18" fill="#1DB954"/>' not in now_svg
-            or not any(f'href="data:image/png;base64,{variant}"' in now_svg
-                       for variant in ("color", "gray"))):
+    if ('<circle cx="168" cy="28" r="18" fill="#ABCDEF"/>' not in now_svg
+            or not any(f'href="{variant}"' in now_svg
+                       for variant in (MINIMAL_PNG_URIS[0], MINIMAL_PNG_URIS[3]))):
         raise RuntimeError(f"Unexpected integrated Now Playing artwork overlay: {now_items}")
     mosaic_payloads = []
     for index, context_value in enumerate(mosaic_contexts):
@@ -193,15 +201,30 @@ def inspect_sdk():
                  if item.get("uuid") == uuid]
         mosaic_payloads.append(items)
         _, fallback, title = tuple(MOSAIC_ACTIONS.values())[index]
+        data = items[1].get("data") if len(items) == 2 else None
         if ([item.get("type") for item in items] != [2, 1]
                 or items[0].get("path") != fallback
                 or items[0].get("textData") != title
-                or items[1].get("data") != ("tl", "tr", "bl", "br")[index]
                 or items[1].get("textData") != ""
                 or [item.get("showtext") for item in items] != [True, False]
                 or any(item.get("key") != key or item.get("actionid") != actionid
                        for item in items)):
             raise RuntimeError(f"Unexpected integrated mosaic payloads: {items}")
+        if index == 0:
+            try:
+                mosaic_svg = base64.b64decode(data.split(",", 1)[1]).decode("utf-8")
+            except (AttributeError, UnicodeDecodeError, ValueError) as exc:
+                raise RuntimeError("Integrated mosaic badge is not a UTF-8 SVG data URI") from exc
+            required = (
+                f'<image width="196" height="196" href="{MINIMAL_PNG_URIS[index]}"/>',
+                '<circle cx="22" cy="22" r="18" fill="#123456"/>',
+                '<path fill="#FFFFFF" d="m25 25 39 25-39 25zm41 0h9v50h-9z"/>',
+            )
+            if not data.startswith("data:image/svg+xml;base64,") \
+                    or not all(fragment in mosaic_svg for fragment in required):
+                raise RuntimeError(f"Unexpected integrated mosaic badge SVG: {items}")
+        elif data != MINIMAL_PNG_URIS[index]:
+            raise RuntimeError(f"Unexpected badge-free integrated mosaic payload: {items}")
     expected_settings = {"progressColor": "#1DB954", "trackColor": "#333333",
                          "textColor": "#FFFFFF", "backgroundColor": "#000000",
                          "strokeWidth": 14}

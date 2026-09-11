@@ -61,7 +61,7 @@ def add_pyinstaller_macos_dylib_alias(root, name="libXau.6.dylib", target="PIL/.
 
 
 class PackagingContractTests(unittest.TestCase):
-    def test_release_metadata_is_consistently_v2_3_3(self):
+    def test_release_metadata_is_consistently_v2_4_0(self):
         plugin = ROOT / "com.arkamax404.mediacontrold200.ulanziPlugin"
         manifest = json.loads((plugin / "manifest.json").read_text("utf-8"))
         package = json.loads((plugin / "package.json").read_text("utf-8"))
@@ -70,13 +70,23 @@ class PackagingContractTests(unittest.TestCase):
         setup_action = (plugin / "runtime" / "python" / "setup_action.py").read_text("utf-8")
         companion_version = (ROOT / "d200_bridge" / "version.py").read_text("utf-8")
 
-        self.assertEqual(manifest["Version"], "2.3.3")
-        self.assertEqual(package["version"], "2.3.3")
-        self.assertEqual(package_lock["version"], "2.3.3")
-        self.assertEqual(package_lock["packages"][""]["version"], "2.3.3")
-        self.assertIn('const VERSION = "2.3.3";', helper)
-        self.assertIn('"Version": "2.3.3"', setup_action)
-        self.assertEqual(companion_version.splitlines()[0], 'COMPANION_VERSION = "2.3.3"')
+        self.assertEqual(manifest["Version"], "2.4.0")
+        self.assertEqual(package["version"], "2.4.0")
+        self.assertEqual(package_lock["version"], "2.4.0")
+        self.assertEqual(package_lock["packages"][""]["version"], "2.4.0")
+        self.assertIn('const VERSION = "2.4.0";', helper)
+        self.assertIn('"Version": "2.4.0"', setup_action)
+        self.assertEqual(companion_version.splitlines()[0], 'COMPANION_VERSION = "2.4.0"')
+
+    def test_store_visual_assets_use_current_png_files(self):
+        store = json.loads((ROOT / "store.json").read_text("utf-8"))
+        self.assertEqual(store["cover"], "assets/cover.png")
+        self.assertEqual(store["screenshots"], ["assets/banner.png"])
+        for reference in (store["cover"], *store["screenshots"]):
+            asset = ROOT / reference
+            self.assertTrue(asset.is_file())
+            self.assertEqual(asset.read_bytes()[:8], b"\x89PNG\r\n\x1a\n")
+        self.assertFalse((ROOT / "assets" / "banner.jpeg").exists())
 
     def test_macos_build_contract_uses_extensionless_launcher_runtime(self):
         build = (PACKAGING / "build_ulanzi_runtime_macos.sh").read_text("utf-8")
