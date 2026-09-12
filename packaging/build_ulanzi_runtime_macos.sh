@@ -21,6 +21,6 @@ PYTHON="$1/venv/bin/python"
 "$PYTHON" -I -s packaging/build_mediaremote_helper.py \
     --source d200_bridge/native/MediaRemoteHelper.m --output "$1/MediaRemoteHelper"
 MEDIAREMOTE_HELPER="$1/MediaRemoteHelper" \
-"$PYTHON" -I -s -m PyInstaller --noconfirm --clean \
+    "$PYTHON" -I -s -m PyInstaller --noconfirm --clean \
     --workpath "$1/pyinstaller" --distpath "$2" packaging/ulanzi_runtime.spec
 mv "$2/runtime/_internal/MediaRemoteHelper" "$2/runtime/MediaRemoteHelper"

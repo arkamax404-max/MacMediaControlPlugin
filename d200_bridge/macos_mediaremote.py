@@ -11,7 +11,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-
 DEFAULT_TIMEOUT_SECONDS = 3.0
 COMMANDS = frozenset(("toggle", "next", "previous"))
 DIAGNOSTIC_STAGES = frozenset(("launch", "timeout", "exit", "parse", "schema"))
@@ -25,11 +24,17 @@ class MediaRemoteGateway:
     or paths.
     """
 
-    def __init__(self, runner: Callable[..., Any] = subprocess.run,
-                 timeout=DEFAULT_TIMEOUT_SECONDS, helper_path=None):
+    def __init__(
+        self,
+        runner: Callable[..., Any] = subprocess.run,
+        timeout=DEFAULT_TIMEOUT_SECONDS,
+        helper_path=None,
+    ):
         self._runner = runner
         self._timeout = timeout
-        self._helper_path = Path(helper_path) if helper_path else self._default_helper_path()
+        self._helper_path = (
+            Path(helper_path) if helper_path else self._default_helper_path()
+        )
         self.last_diagnostic = None
 
     def read_now_playing(self):
@@ -46,7 +51,11 @@ class MediaRemoteGateway:
         media = dict(media)
         artwork = media.pop("artwork", None)
         try:
-            media["artwork"] = base64.b64decode(artwork, validate=True) if isinstance(artwork, str) else None
+            media["artwork"] = (
+                base64.b64decode(artwork, validate=True)
+                if isinstance(artwork, str)
+                else None
+            )
         except ValueError:
             self._diagnose("schema")
             return self._unavailable()
@@ -70,8 +79,13 @@ class MediaRemoteGateway:
 
     def _invoke(self, operation):
         try:
-            completed = self._runner([str(self._helper_path), operation], capture_output=True,
-                                     text=True, timeout=self._timeout, check=False)
+            completed = self._runner(
+                [str(self._helper_path), operation],
+                capture_output=True,
+                text=True,
+                timeout=self._timeout,
+                check=False,
+            )
         except subprocess.TimeoutExpired:
             self._diagnose("timeout")
             return None
@@ -100,7 +114,11 @@ class MediaRemoteGateway:
             raise ValueError("Unsupported diagnostic stage")
         code = self._safe_exit_code(exit_code)
         self.last_diagnostic = {"stage": stage, "exit_code": code}
-        logging.getLogger("d200_bridge").info("mediaremote_failure", stage, code if code is not None else "none")
+        logging.getLogger("d200_bridge").info(
+            "mediaremote_failure stage=%s exit=%s",
+            stage,
+            code if code is not None else "none",
+        )
 
     @staticmethod
     def _safe_exit_code(value):
@@ -108,21 +126,35 @@ class MediaRemoteGateway:
 
     @staticmethod
     def _default_helper_path():
-        root = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).parent / "native"
+        root = (
+            Path(sys.executable).resolve().parent
+            if getattr(sys, "frozen", False)
+            else Path(__file__).parent / "native"
+        )
         return root / "MediaRemoteHelper"
 
     @staticmethod
     def _valid_media(media):
         required = {"state", "title", "artist", "duration", "position", "artwork"}
         optional = {"playback_rate", "position_updated_at"}
-        return (isinstance(media, dict) and required <= set(media) <= required | optional
-                and media.get("state") in {"playing", "paused", "stopped"}
-                and isinstance(media.get("title"), str) and isinstance(media.get("artist"), str)
-                and isinstance(media.get("duration"), (int, float))
-                and isinstance(media.get("position"), (int, float))
-                and ("playback_rate" not in media or isinstance(media["playback_rate"], (int, float)))
-                and ("position_updated_at" not in media or isinstance(media["position_updated_at"], str))
-                and (isinstance(media.get("artwork"), str) or media.get("artwork") is None))
+        return (
+            isinstance(media, dict)
+            and required <= set(media) <= required | optional
+            and media.get("state") in {"playing", "paused", "stopped"}
+            and isinstance(media.get("title"), str)
+            and isinstance(media.get("artist"), str)
+            and isinstance(media.get("duration"), (int, float))
+            and isinstance(media.get("position"), (int, float))
+            and (
+                "playback_rate" not in media
+                or isinstance(media["playback_rate"], (int, float))
+            )
+            and (
+                "position_updated_at" not in media
+                or isinstance(media["position_updated_at"], str)
+            )
+            and (isinstance(media.get("artwork"), str) or media.get("artwork") is None)
+        )
 
     @staticmethod
     def _unavailable():

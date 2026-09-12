@@ -1,20 +1,20 @@
 import json
+import os
 import stat
 import sys
 import tempfile
 import threading
 import time
 import unittest
-from unittest import mock
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-
+from unittest import mock
 
 ROOT = Path(__file__).parents[1]
 RUNTIME = ROOT / "com.arkamax404.mediacontrold200.ulanziPlugin" / "runtime" / "python"
 sys.path.insert(0, str(RUNTIME))
 
-from bridge_client import (  # noqa: E402
+from bridge_client import (  # noqa: E402  # type: ignore[import-not-found]
     BRIDGE_ORIGIN,
     BRIDGE_TIMEOUT_SECONDS,
     COMMAND_REQUEST_TIMEOUT_SECONDS,
@@ -22,13 +22,13 @@ from bridge_client import (  # noqa: E402
     BridgeResult,
     bridge_origin_from_future,
 )
-from transport_actions import (  # noqa: E402
+from transport_actions import (  # noqa: E402  # type: ignore[import-not-found]
     ACTION_COMMANDS,
     TransportRouter,
     action_uuid_from_event,
     command_from_event,
 )
-from transport_diagnostics import (  # noqa: E402
+from transport_diagnostics import (  # noqa: E402  # type: ignore[import-not-found]
     MAX_COUNTER,
     CategoryCounterFile,
     CompanionStartupDiagnosticFile,
@@ -38,10 +38,13 @@ from transport_diagnostics import (  # noqa: E402
     transport_diagnostic_path,
 )
 
-
 TOKEN = "A" * 43
 INSTANCE_ID = "123e4567-e89b-42d3-a456-426614174000"
 PLUGIN_UUID = "com.arkamax404.ulanzi.mediacontrol"
+
+
+def token_loader():
+    return TOKEN
 
 
 def health(**overrides):
@@ -104,30 +107,54 @@ def wait_for(predicate, timeout=2):
 
 class PythonTransportTests(unittest.TestCase):
     def test_transport_diagnostic_path_uses_companion_log_directory(self):
-        home = Path("/Users/example")
-        self.assertEqual(transport_diagnostic_path(home), home / "Library" / "Logs"
-                         / "GSMTCD200Controller" / "diagnostics" / "transport-counters.json")
+        home = Path(tempfile.gettempdir()).resolve() / "example-home"
+        self.assertEqual(
+            transport_diagnostic_path(home),
+            home
+            / "Library"
+            / "Logs"
+            / "GSMTCD200Controller"
+            / "diagnostics"
+            / "transport-counters.json",
+        )
         with self.assertRaises(ValueError):
             transport_diagnostic_path("relative-home")
         with self.assertRaises(ValueError):
             CategoryCounterFile("relative-counters.json")
 
-    def test_companion_startup_diagnostic_persists_only_safe_fields_with_secure_permissions(self):
+    @unittest.skipUnless(
+        os.name == "posix", "requires POSIX directory fsync and mode semantics"
+    )
+    def test_companion_startup_diagnostic_persists_only_safe_fields_with_secure_permissions(
+        self,
+    ):
         with tempfile.TemporaryDirectory() as temporary:
             home = Path(temporary)
             path = companion_startup_diagnostic_path(home)
             CompanionStartupDiagnosticFile(home=home).write("exited", 1, "redacted")
-            self.assertEqual(json.loads(path.read_text(encoding="ascii")), {
-                "exit_code": 1,
-                "stage": "exited",
-                "stderr_category": "redacted",
-            })
-            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
-            self.assertEqual(stat.S_IMODE(path.parent.stat().st_mode), 0o700)
+            self.assertEqual(
+                json.loads(path.read_text(encoding="ascii")),
+                {
+                    "exit_code": 1,
+                    "stage": "exited",
+                    "stderr_category": "redacted",
+                },
+            )
+            if os.name == "posix":
+                self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+                self.assertEqual(stat.S_IMODE(path.parent.stat().st_mode), 0o700)
             content = path.read_text(encoding="ascii")
-            for forbidden in ("Bearer", "private-token", "Users", "mp3", "artwork", "host-arg"):
+            for forbidden in (
+                "Bearer",
+                "private-token",
+                "Users",
+                "mp3",
+                "artwork",
+                "host-arg",
+            ):
                 self.assertNotIn(forbidden, content)
 
+    @unittest.skipUnless(os.name == "posix", "requires POSIX symlink safety semantics")
     def test_companion_startup_diagnostic_rejects_unsafe_data_and_symlinks(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -138,17 +165,17 @@ class PythonTransportTests(unittest.TestCase):
                 ("exited", 256, "redacted"),
                 ("exited", 1, "SECRET /Users/example/private.mp3"),
             ):
-                with self.subTest(arguments=arguments):
-                    with self.assertRaises(ValueError):
-                        diagnostic.write(*arguments)
+                with self.subTest(arguments=arguments), self.assertRaises(ValueError):
+                    diagnostic.write(*arguments)
 
             target = root / "target"
             target.mkdir()
             unsafe = root / "Library"
             unsafe.symlink_to(target, target_is_directory=True)
             with self.assertRaises(OSError):
-                CompanionStartupDiagnosticFile(unsafe / "Logs" / "companion-startup.json").write(
-                    "spawned", None, "none")
+                CompanionStartupDiagnosticFile(
+                    unsafe / "Logs" / "companion-startup.json"
+                ).write("spawned", None, "none")
 
             path.parent.mkdir()
             path.symlink_to(target / "outside")
@@ -156,41 +183,74 @@ class PythonTransportTests(unittest.TestCase):
                 diagnostic.write("exited", 1, "redacted")
             self.assertFalse((target / "outside").exists())
 
-    def test_companion_startup_diagnostic_overwrites_atomically_and_keeps_previous_on_replace_failure(self):
+    @unittest.skipUnless(
+        os.name == "posix", "requires POSIX directory fsync and mode semantics"
+    )
+    def test_companion_startup_diagnostic_overwrites_atomically_and_keeps_previous_on_replace_failure(
+        self,
+    ):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "diagnostics" / "companion-startup.json"
             diagnostic = CompanionStartupDiagnosticFile(path)
             diagnostic.write("spawned", None, "none")
             diagnostic.write("exited", 1, "startup_failed")
-            self.assertEqual(json.loads(path.read_text(encoding="ascii")), {
-                "exit_code": 1,
-                "stage": "exited",
-                "stderr_category": "startup_failed",
-            })
+            self.assertEqual(
+                json.loads(path.read_text(encoding="ascii")),
+                {
+                    "exit_code": 1,
+                    "stage": "exited",
+                    "stderr_category": "startup_failed",
+                },
+            )
             previous = path.read_text(encoding="ascii")
-            with mock.patch("transport_diagnostics.os.replace", side_effect=OSError("blocked")):
-                with self.assertRaises(OSError):
-                    diagnostic.write("health-timeout", None, "redacted")
+            with (
+                mock.patch(
+                    "transport_diagnostics.os.replace", side_effect=OSError("blocked")
+                ),
+                self.assertRaises(OSError),
+            ):
+                diagnostic.write("health-timeout", None, "redacted")
             self.assertEqual(path.read_text(encoding="ascii"), previous)
             self.assertEqual(list(path.parent.glob("*.tmp")), [])
 
+    @unittest.skipUnless(
+        os.name == "posix", "requires POSIX directory fsync and mode semantics"
+    )
     def test_transport_diagnostics_persist_atomic_category_counters_only(self):
         with tempfile.TemporaryDirectory() as temporary:
-            path = Path(temporary) / "Library" / "Logs" / "GSMTCD200Controller" / "diagnostics" / "transport-counters.json"
+            path = (
+                Path(temporary)
+                / "Library"
+                / "Logs"
+                / "GSMTCD200Controller"
+                / "diagnostics"
+                / "transport-counters.json"
+            )
             diagnostics = TransportDiagnostics(counter_file=CategoryCounterFile(path))
             diagnostics.recognized_event("next")
             diagnostics.result("Bearer private-token https://example.test/track")
-            self.assertEqual(json.loads(path.read_text(encoding="ascii")), {
-                "recognized_next": 1,
-                "result_unavailable": 1,
-            })
-            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
-            self.assertEqual(stat.S_IMODE(path.parent.stat().st_mode), 0o700)
+            self.assertEqual(
+                json.loads(path.read_text(encoding="ascii")),
+                {
+                    "recognized_next": 1,
+                    "result_unavailable": 1,
+                },
+            )
+            if os.name == "posix":
+                self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+                self.assertEqual(stat.S_IMODE(path.parent.stat().st_mode), 0o700)
             self.assertEqual(list(path.parent.glob("*.tmp")), [])
             content = path.read_text(encoding="ascii")
-            for forbidden in ("Bearer", "private-token", "https://", "track", str(path.parent)):
+            for forbidden in (
+                "Bearer",
+                "private-token",
+                "https://",
+                "track",
+                str(path.parent),
+            ):
                 self.assertNotIn(forbidden, content)
 
+    @unittest.skipUnless(os.name == "posix", "requires POSIX symlink safety semantics")
     def test_counter_file_rejects_symlinked_directory_or_target(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -199,7 +259,9 @@ class PythonTransportTests(unittest.TestCase):
             unsafe_directory = root / "Library"
             unsafe_directory.symlink_to(target, target_is_directory=True)
             with self.assertRaises(OSError):
-                CategoryCounterFile(unsafe_directory / "Logs" / "transport-counters.json").write({})
+                CategoryCounterFile(
+                    unsafe_directory / "Logs" / "transport-counters.json"
+                ).write({})
 
             path = root / "safe" / "transport-counters.json"
             path.parent.mkdir()
@@ -208,52 +270,73 @@ class PythonTransportTests(unittest.TestCase):
                 CategoryCounterFile(path).write({"recognized_next": 1})
             self.assertFalse((target / "outside").exists())
 
+    @unittest.skipUnless(
+        os.name == "posix", "requires POSIX directory fsync and mode semantics"
+    )
     def test_counter_file_preserves_previous_snapshot_when_replace_fails(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "diagnostics" / "transport-counters.json"
             path.parent.mkdir()
             path.write_text('{"recognized_next":1}\n', encoding="ascii")
-            with mock.patch("transport_diagnostics.os.replace", side_effect=OSError("blocked")):
-                with self.assertRaises(OSError):
-                    CategoryCounterFile(path).write({"recognized_next": 2})
-            self.assertEqual(path.read_text(encoding="ascii"), '{"recognized_next":1}\n')
+            with (
+                mock.patch(
+                    "transport_diagnostics.os.replace", side_effect=OSError("blocked")
+                ),
+                self.assertRaises(OSError),
+            ):
+                CategoryCounterFile(path).write({"recognized_next": 2})
+            self.assertEqual(
+                path.read_text(encoding="ascii"), '{"recognized_next":1}\n'
+            )
             self.assertEqual(list(path.parent.glob("*.tmp")), [])
 
     def test_exact_action_uuid_mapping(self):
-        self.assertEqual(ACTION_COMMANDS, {
-            f"{PLUGIN_UUID}.nowplaying": "toggle",
-            f"{PLUGIN_UUID}.previous": "previous",
-            f"{PLUGIN_UUID}.toggle": "toggle",
-            f"{PLUGIN_UUID}.next": "next",
-            f"{PLUGIN_UUID}.volume-up": "volume-up",
-            f"{PLUGIN_UUID}.volume-down": "volume-down",
-            f"{PLUGIN_UUID}.mute-toggle": "mute-toggle",
-        })
+        self.assertEqual(
+            ACTION_COMMANDS,
+            {
+                f"{PLUGIN_UUID}.nowplaying": "toggle",
+                f"{PLUGIN_UUID}.previous": "previous",
+                f"{PLUGIN_UUID}.toggle": "toggle",
+                f"{PLUGIN_UUID}.next": "next",
+                f"{PLUGIN_UUID}.volume-up": "volume-up",
+                f"{PLUGIN_UUID}.volume-down": "volume-down",
+                f"{PLUGIN_UUID}.mute-toggle": "mute-toggle",
+            },
+        )
 
-    def test_physical_transport_diagnostics_recognize_each_event_and_classify_results(self):
+    def test_physical_transport_diagnostics_recognize_each_event_and_classify_results(
+        self,
+    ):
         diagnostics = TransportDiagnostics()
         for action in ("previous", "toggle", "next"):
             diagnostics.recognized_event(action)
         for status, expected in (
-            ("ok", "success"), ("rejected", "rejected"),
-            ("unavailable", "unavailable"), ("configuration", "compatibility"),
-            ("incompatible", "compatibility"), ("stopped", "lifecycle"),
-            ("queue_full", "lifecycle"), ("discarded", "lifecycle"),
+            ("ok", "success"),
+            ("rejected", "rejected"),
+            ("unavailable", "unavailable"),
+            ("configuration", "compatibility"),
+            ("incompatible", "compatibility"),
+            ("stopped", "lifecycle"),
+            ("queue_full", "lifecycle"),
+            ("discarded", "lifecycle"),
         ):
             self.assertEqual(result_class(status), expected)
             diagnostics.result(status)
         diagnostics.command_post_attempt()
-        self.assertEqual(diagnostics.snapshot(), {
-            "command_post_attempt": 1,
-            "recognized_next": 1,
-            "recognized_previous": 1,
-            "recognized_toggle": 1,
-            "result_compatibility": 2,
-            "result_lifecycle": 3,
-            "result_rejected": 1,
-            "result_success": 1,
-            "result_unavailable": 1,
-        })
+        self.assertEqual(
+            diagnostics.snapshot(),
+            {
+                "command_post_attempt": 1,
+                "recognized_next": 1,
+                "recognized_previous": 1,
+                "recognized_toggle": 1,
+                "result_compatibility": 2,
+                "result_lifecycle": 3,
+                "result_rejected": 1,
+                "result_success": 1,
+                "result_unavailable": 1,
+            },
+        )
         diagnostics._counters["command_post_attempt"] = MAX_COUNTER
         diagnostics.command_post_attempt()
         self.assertEqual(diagnostics.snapshot()["command_post_attempt"], MAX_COUNTER)
@@ -270,10 +353,16 @@ class PythonTransportTests(unittest.TestCase):
         diagnostics = TransportDiagnostics(recorder)
         diagnostics.recognized_event("next")
         diagnostics.result("Bearer private-token")
-        self.assertEqual(recorder.calls, [
-            ("transport_diagnostic category=%s count=%d", ("recognized_next", 1)),
-            ("transport_diagnostic category=%s count=%d", ("result_unavailable", 1)),
-        ])
+        self.assertEqual(
+            recorder.calls,
+            [
+                ("transport_diagnostic category=%s count=%d", ("recognized_next", 1)),
+                (
+                    "transport_diagnostic category=%s count=%d",
+                    ("result_unavailable", 1),
+                ),
+            ],
+        )
 
     def test_accepts_real_event_variants_and_ignores_malformed_or_unknown_actions(self):
         variants = [
@@ -287,8 +376,11 @@ class PythonTransportTests(unittest.TestCase):
         for event in (None, [], {}, {"uuid": 3}):
             with self.subTest(event=event):
                 self.assertIsNone(action_uuid_from_event(event))
-        for event in ({"context": "bad"}, {"uuid": f"{PLUGIN_UUID}.progress"},
-                      {"uuid": "com.other.plugin.next"}):
+        for event in (
+            {"context": "bad"},
+            {"uuid": f"{PLUGIN_UUID}.progress"},
+            {"uuid": "com.other.plugin.next"},
+        ):
             with self.subTest(event=event):
                 self.assertIsNone(command_from_event(event))
 
@@ -297,8 +389,14 @@ class PythonTransportTests(unittest.TestCase):
         router = TransportRouter(client)
         self.assertTrue(router.start())
         mixed = (
-            "previous", "volume-up", "volume-up", "volume-up",
-            "toggle", "volume-down", "mute-toggle", "next",
+            "previous",
+            "volume-up",
+            "volume-up",
+            "volume-up",
+            "toggle",
+            "volume-down",
+            "mute-toggle",
+            "next",
         )
         for suffix in mixed:
             self.assertTrue(router.handle_run({"uuid": f"{PLUGIN_UUID}.{suffix}"}))
@@ -308,7 +406,9 @@ class PythonTransportTests(unittest.TestCase):
         self.assertEqual(client.commands, list(mixed))
         self.assertTrue(router.stop())
 
-    def test_router_is_single_run_authority_and_polls_after_every_successful_command(self):
+    def test_router_is_single_run_authority_and_polls_after_every_successful_command(
+        self,
+    ):
         class Client:
             def __init__(self):
                 self.commands = []
@@ -321,78 +421,129 @@ class PythonTransportTests(unittest.TestCase):
         client = Client()
         routed, polls = [], []
         router = TransportRouter(client)
-        router.configure_runtime(lambda event: routed.append(event) or True,
-                                 lambda: polls.append(tuple(client.commands)))
+        router.configure_runtime(
+            lambda event: routed.append(event) or True,
+            lambda: polls.append(tuple(client.commands)),
+        )
         router.start()
         progress = {"uuid": f"{PLUGIN_UUID}.progress", "context": "progress"}
         self.assertTrue(router.handle_run(progress))
         self.assertEqual(routed, [progress])
-        for uuid in (f"{PLUGIN_UUID}.toggle", f"{PLUGIN_UUID}.nowplaying",
-                     f"{PLUGIN_UUID}.volume-up", f"{PLUGIN_UUID}.previous",
-                     f"{PLUGIN_UUID}.next"):
+        for uuid in (
+            f"{PLUGIN_UUID}.toggle",
+            f"{PLUGIN_UUID}.nowplaying",
+            f"{PLUGIN_UUID}.volume-up",
+            f"{PLUGIN_UUID}.previous",
+            f"{PLUGIN_UUID}.next",
+        ):
             self.assertTrue(router.handle_run({"uuid": uuid}))
         self.assertTrue(wait_for(lambda: len(client.commands) == 5))
         self.assertTrue(wait_for(lambda: len(polls) == 4))
-        self.assertEqual(client.commands, ["toggle", "toggle", "volume-up", "previous", "next"])
-        self.assertEqual(polls, [
-            ("toggle",),
-            ("toggle", "toggle"),
-            ("toggle", "toggle", "volume-up", "previous"),
-            ("toggle", "toggle", "volume-up", "previous", "next"),
-        ], "poll must follow every successful command and skip failures")
+        self.assertEqual(
+            client.commands, ["toggle", "toggle", "volume-up", "previous", "next"]
+        )
+        self.assertEqual(
+            polls,
+            [
+                ("toggle",),
+                ("toggle", "toggle"),
+                ("toggle", "toggle", "volume-up", "previous"),
+                ("toggle", "toggle", "volume-up", "previous", "next"),
+            ],
+            "poll must follow every successful command and skip failures",
+        )
         self.assertTrue(router.stop())
 
     def test_router_queues_secondary_tile_commands_without_audio_target(self):
         class Client:
-            def __init__(self): self.commands = []
+            def __init__(self):
+                self.commands = []
+
             def execute(self, command, cancelled=None):
-                self.commands.append(command); return BridgeResult(command, "ok")
+                self.commands.append(command)
+                return BridgeResult(command, "ok")
 
         client = Client()
         router = TransportRouter(client)
         router.configure_runtime(
-            lambda _event: False, lambda: None,
+            lambda _event: False,
+            lambda: None,
             lambda event: "mute-toggle" if event.get("context") == "tile" else None,
         )
         router.start()
-        self.assertTrue(router.handle_run({
-            "uuid": f"{PLUGIN_UUID}.artwork-top-left", "context": "tile",
-        }))
+        self.assertTrue(
+            router.handle_run(
+                {
+                    "uuid": f"{PLUGIN_UUID}.artwork-top-left",
+                    "context": "tile",
+                }
+            )
+        )
         self.assertTrue(wait_for(lambda: client.commands == ["mute-toggle"]))
         self.assertTrue(router.stop())
 
     def test_bridge_client_matches_health_auth_and_command_contract(self):
-        for command in ("previous", "toggle", "next", "volume-up", "volume-down", "mute-toggle"):
+        for command in (
+            "previous",
+            "toggle",
+            "next",
+            "volume-up",
+            "volume-down",
+            "mute-toggle",
+        ):
             with self.subTest(command=command):
-                opener = RecordingOpener([Response(payload=health()), Response(payload={"ok": True})])
-                result = BridgeClient(token_loader=lambda: TOKEN, opener=opener).execute(command)
+                opener = RecordingOpener(
+                    [Response(payload=health()), Response(payload={"ok": True})]
+                )
+                bridge = BridgeClient(token_loader=token_loader, opener=opener)
+                result = bridge.execute(command)  # nosemgrep
                 self.assertEqual(result, BridgeResult(command, "ok", 200))
                 self.assertEqual(len(opener.calls), 2)
                 health_request, health_timeout = opener.calls[0]
                 command_request, command_timeout = opener.calls[1]
-                self.assertEqual((health_request.full_url, health_request.method),
-                                 (f"{BRIDGE_ORIGIN}/health", "GET"))
-                self.assertEqual((command_request.full_url, command_request.method),
-                                 (f"{BRIDGE_ORIGIN}/command/{command}", "POST"))
-                health_headers = {key.lower(): value for key, value in health_request.header_items()}
-                command_headers = {key.lower(): value for key, value in command_request.header_items()}
+                self.assertEqual(
+                    (health_request.full_url, health_request.method),
+                    (f"{BRIDGE_ORIGIN}/health", "GET"),
+                )
+                self.assertEqual(
+                    (command_request.full_url, command_request.method),
+                    (f"{BRIDGE_ORIGIN}/command/{command}", "POST"),
+                )
+                health_headers = {
+                    key.lower(): value for key, value in health_request.header_items()
+                }
+                command_headers = {
+                    key.lower(): value for key, value in command_request.header_items()
+                }
                 self.assertEqual(health_headers["authorization"], f"Bearer {TOKEN}")
                 self.assertEqual(command_headers["authorization"], f"Bearer {TOKEN}")
                 self.assertEqual(command_headers["x-companion-instance"], INSTANCE_ID)
                 self.assertEqual(command_headers["content-type"], "application/json")
                 self.assertEqual(command_request.data, b"{}")
-                self.assertEqual((health_timeout, command_timeout), (
-                    BRIDGE_TIMEOUT_SECONDS, COMMAND_REQUEST_TIMEOUT_SECONDS,
-                ))
+                self.assertEqual(
+                    (health_timeout, command_timeout),
+                    (
+                        BRIDGE_TIMEOUT_SECONDS,
+                        COMMAND_REQUEST_TIMEOUT_SECONDS,
+                    ),
+                )
 
     def test_authenticated_post_attempt_is_counted_only_after_compatible_health(self):
         diagnostics = TransportDiagnostics()
-        compatible = RecordingOpener([Response(payload=health()), Response(payload={"ok": True})])
-        self.assertTrue(BridgeClient(token_loader=lambda: TOKEN, opener=compatible,
-                                     diagnostics=diagnostics).execute("next").ok)
+        compatible = RecordingOpener(
+            [Response(payload=health()), Response(payload={"ok": True})]
+        )
+        self.assertTrue(
+            BridgeClient(
+                token_loader=token_loader, opener=compatible, diagnostics=diagnostics
+            )
+            .execute("next")
+            .ok
+        )
         incompatible = RecordingOpener([Response(payload=health(api_major=2))])
-        BridgeClient(token_loader=lambda: TOKEN, opener=incompatible,
-                     diagnostics=diagnostics).execute("next")
+        BridgeClient(
+            token_loader=token_loader, opener=incompatible, diagnostics=diagnostics
+        ).execute("next")
         self.assertEqual(diagnostics.snapshot(), {"command_post_attempt": 1})
 
     def test_command_timeout_is_bounded_above_the_three_step_audio_budget(self):
@@ -408,12 +559,21 @@ class PythonTransportTests(unittest.TestCase):
             def execute(self, command, cancelled=None):
                 self.commands.append(command)
                 status = "rejected" if command == "volume-down" else "ok"
-                return BridgeResult(command, status, 409 if status == "rejected" else 200)
+                return BridgeResult(
+                    command, status, 409 if status == "rejected" else 200
+                )
 
         client = SequenceClient()
         router = TransportRouter(client)
         router.start()
-        mixed = ("previous", "volume-up", "toggle", "volume-down", "mute-toggle", "next")
+        mixed = (
+            "previous",
+            "volume-up",
+            "toggle",
+            "volume-down",
+            "mute-toggle",
+            "next",
+        )
         for suffix in mixed:
             self.assertTrue(router.handle_run({"uuid": f"{PLUGIN_UUID}.{suffix}"}))
         self.assertTrue(wait_for(lambda: len(client.commands) == len(mixed)))
@@ -422,21 +582,37 @@ class PythonTransportTests(unittest.TestCase):
         self.assertTrue(router.stop())
 
     def test_only_loopback_origins_are_allowed(self):
-        BridgeClient(token_loader=lambda: TOKEN, origin="http://127.0.0.1:1")
-        for origin in ("https://127.0.0.1:43821", "http://localhost:43821",
-                       "http://0.0.0.0:43821", "http://example.com:43821"):
+        BridgeClient(token_loader=token_loader, origin="http://127.0.0.1:1")
+        for origin in (
+            "https://127.0.0.1:43821",
+            "http://localhost:43821",
+            "http://0.0.0.0:43821",
+            "http://example.com:43821",
+        ):
             with self.subTest(origin=origin), self.assertRaises(ValueError):
-                BridgeClient(token_loader=lambda: TOKEN, origin=origin)
+                BridgeClient(token_loader=token_loader, origin=origin)
 
-    def test_future_bridge_origin_override_is_loopback_only_and_defaults_to_fixed_origin(self):
+    def test_future_bridge_origin_override_is_loopback_only_and_defaults_to_fixed_origin(
+        self,
+    ):
         self.assertEqual(bridge_origin_from_future(("unknown",)), BRIDGE_ORIGIN)
         override = "http://127.0.0.1:54321"
-        self.assertEqual(bridge_origin_from_future((f"--bridge-origin={override}",)), override)
+        self.assertEqual(
+            bridge_origin_from_future((f"--bridge-origin={override}",)), override
+        )
         with self.assertRaises(ValueError):
-            BridgeClient(origin=bridge_origin_from_future(("--bridge-origin=http://example.com:1",)))
+            BridgeClient(
+                origin=bridge_origin_from_future(
+                    ("--bridge-origin=http://example.com:1",)
+                )
+            )
         with self.assertRaises(ValueError):
-            bridge_origin_from_future(("--bridge-origin=http://127.0.0.1:1",
-                                       "--bridge-origin=http://127.0.0.1:2"))
+            bridge_origin_from_future(
+                (
+                    "--bridge-origin=http://127.0.0.1:1",
+                    "--bridge-origin=http://127.0.0.1:2",
+                )
+            )
 
     def test_missing_or_invalid_token_never_sends_http(self):
         loaders = (
@@ -460,43 +636,50 @@ class PythonTransportTests(unittest.TestCase):
         for responses, expected in cases:
             with self.subTest(expected=expected):
                 result = BridgeClient(
-                    token_loader=lambda: TOKEN, opener=RecordingOpener(responses)
+                    token_loader=token_loader, opener=RecordingOpener(responses)
                 ).execute("toggle")
                 self.assertEqual(result.status, expected)
 
     def test_real_http_error_is_rejected_with_status_without_reading_body(self):
+        def handler_for(status):
+            class Handler(BaseHTTPRequestHandler):
+                def do_GET(self):
+                    payload = json.dumps(health()).encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.end_headers()
+                    self.wfile.write(payload)
+
+                def do_POST(self):
+                    self.send_response(status)
+                    self.send_header("Content-Length", "9")
+                    self.end_headers()
+                    self.wfile.write(b"sensitive")
+
+                def log_message(self, format, *args):
+                    pass
+
+            return Handler
+
         for command_status in (409, 503):
             with self.subTest(command_status=command_status):
-                class Handler(BaseHTTPRequestHandler):
-                    def do_GET(self):
-                        payload = json.dumps(health()).encode("utf-8")
-                        self.send_response(200)
-                        self.send_header("Content-Length", str(len(payload)))
-                        self.end_headers()
-                        self.wfile.write(payload)
-
-                    def do_POST(self):
-                        self.send_response(command_status)
-                        self.send_header("Content-Length", "9")
-                        self.end_headers()
-                        self.wfile.write(b"sensitive")
-
-                    def log_message(self, *_args):
-                        pass
-
-                server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+                server = ThreadingHTTPServer(
+                    ("127.0.0.1", 0), handler_for(command_status)
+                )
                 thread = threading.Thread(target=server.serve_forever)
                 thread.start()
                 try:
                     result = BridgeClient(
-                        token_loader=lambda: TOKEN,
+                        token_loader=token_loader,
                         origin=f"http://127.0.0.1:{server.server_port}",
                     ).execute("next")
                 finally:
                     server.shutdown()
                     server.server_close()
                     thread.join()
-                self.assertEqual(result, BridgeResult("next", "rejected", command_status))
+                self.assertEqual(
+                    result, BridgeResult("next", "rejected", command_status)
+                )
 
     def test_incompatible_or_malformed_health_suppresses_command(self):
         for payload, expected in (
@@ -507,7 +690,9 @@ class PythonTransportTests(unittest.TestCase):
         ):
             with self.subTest(payload=payload):
                 opener = RecordingOpener([Response(payload=payload)])
-                result = BridgeClient(token_loader=lambda: TOKEN, opener=opener).execute("previous")
+                result = BridgeClient(token_loader=token_loader, opener=opener).execute(
+                    "previous"
+                )
                 self.assertEqual(result.status, expected)
                 self.assertEqual(len(opener.calls), 1)
 
@@ -519,19 +704,34 @@ class PythonTransportTests(unittest.TestCase):
         router = TransportRouter(BrokenClient())
         router.start()
         self.assertTrue(router.handle_run({"uuid": f"{PLUGIN_UUID}.next"}))
-        self.assertTrue(wait_for(lambda: router.last_result is not None))
+        self.assertTrue(
+            wait_for(
+                lambda current_router=router: current_router.last_result is not None
+            )
+        )
         self.assertEqual(router.last_result, BridgeResult("next", "unavailable"))
         self.assertTrue(router.stop())
 
     def test_router_reports_success_and_failure_categories_without_event_data(self):
         diagnostics = TransportDiagnostics()
-        for status, category in (("ok", "success"), ("rejected", "rejected"),
-                                 ("unavailable", "unavailable")):
+        for status, category in (
+            ("ok", "success"),
+            ("rejected", "rejected"),
+            ("unavailable", "unavailable"),
+        ):
             with self.subTest(status=status):
-                router = TransportRouter(RecordingClient(status), diagnostics=diagnostics)
+                router = TransportRouter(
+                    RecordingClient(status), diagnostics=diagnostics
+                )
                 self.assertTrue(router.start())
                 self.assertTrue(router.handle_run({"uuid": f"{PLUGIN_UUID}.next"}))
-                self.assertTrue(wait_for(lambda: router.last_result is not None))
+                self.assertTrue(
+                    wait_for(
+                        lambda current_router=router: (
+                            current_router.last_result is not None
+                        )
+                    )
+                )
                 self.assertTrue(router.stop())
                 self.assertGreaterEqual(diagnostics.snapshot()[f"result_{category}"], 1)
         snapshot = diagnostics.snapshot()
@@ -562,7 +762,9 @@ class PythonTransportTests(unittest.TestCase):
         self.assertTrue(router.handle_run({"uuid": f"{PLUGIN_UUID}.toggle"}))
         self.assertTrue(router.handle_run({"uuid": f"{PLUGIN_UUID}.next"}))
         self.assertFalse(router.handle_run({"uuid": f"{PLUGIN_UUID}.previous"}))
-        self.assertEqual(router.last_enqueue_result, BridgeResult("previous", "queue_full"))
+        self.assertEqual(
+            router.last_enqueue_result, BridgeResult("previous", "queue_full")
+        )
         client.release.set()
         self.assertTrue(wait_for(lambda: len(client.commands) == 3))
         self.assertEqual(client.commands, ["previous", "toggle", "next"])

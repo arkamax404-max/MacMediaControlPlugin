@@ -1,2 +1,5 @@
 # Preserve byte-exact vendored SDK files and their recorded checksums.
 com.arkamax404.mediacontrold200.ulanziPlugin/vendor/ulanzi-sdk/** -text
+
+# Keep attribution files stable across host checkout settings.
+packaging/licenses/cpython/LICENSE.txt text eol=lf

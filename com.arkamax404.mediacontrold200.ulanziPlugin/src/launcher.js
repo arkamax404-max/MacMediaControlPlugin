@@ -16,7 +16,8 @@ export function runtimePaths(baseDirectory = moduleDirectory, pathImpl = path) {
 
 function repairRuntimePermissions(targets, fsImpl) {
   const noFollow = fsImpl.constants?.O_NOFOLLOW;
-  if (!Number.isInteger(noFollow)) throw new Error("Secure runtime validation is unavailable");
+  if (!Number.isInteger(noFollow))
+    throw new Error("Secure runtime validation is unavailable");
 
   const handles = [];
   try {
@@ -31,10 +32,14 @@ function repairRuntimePermissions(targets, fsImpl) {
       );
       handles.push({ descriptor, pathStats, target });
       const descriptorStats = fsImpl.fstatSync(descriptor);
-      if (!descriptorStats.isFile()
-          || descriptorStats.dev !== pathStats.dev
-          || descriptorStats.ino !== pathStats.ino) {
-        throw new Error(`Runtime executable changed during validation: ${target}`);
+      if (
+        !descriptorStats.isFile() ||
+        descriptorStats.dev !== pathStats.dev ||
+        descriptorStats.ino !== pathStats.ino
+      ) {
+        throw new Error(
+          `Runtime executable changed during validation: ${target}`,
+        );
       }
     }
 
@@ -48,14 +53,18 @@ function repairRuntimePermissions(targets, fsImpl) {
     for (const { descriptor, target } of handles) {
       const pathStats = fsImpl.lstatSync(target);
       const descriptorStats = fsImpl.fstatSync(descriptor);
-      if (pathStats.isSymbolicLink() || !pathStats.isFile()
-          || descriptorStats.dev !== pathStats.dev
-          || descriptorStats.ino !== pathStats.ino) {
+      if (
+        pathStats.isSymbolicLink() ||
+        !pathStats.isFile() ||
+        descriptorStats.dev !== pathStats.dev ||
+        descriptorStats.ino !== pathStats.ino
+      ) {
         throw new Error(`Runtime executable changed during repair: ${target}`);
       }
     }
   } finally {
-    for (const { descriptor } of handles.reverse()) fsImpl.closeSync(descriptor);
+    for (const { descriptor } of handles.reverse())
+      fsImpl.closeSync(descriptor);
   }
 }
 
@@ -86,7 +95,12 @@ export function createLauncher({
     stopping = true;
     requestedSignal = signal;
     if (child?.stdin && !child.stdin.destroyed) child.stdin.end();
-    if (signal && child && child.exitCode === null && child.signalCode === null) {
+    if (
+      signal &&
+      child &&
+      child.exitCode === null &&
+      child.signalCode === null
+    ) {
       child.kill(signal);
     }
   };
@@ -107,7 +121,10 @@ export function createLauncher({
     if (finished) return;
     finished = true;
     removeLifecycleListeners();
-    if (error) consoleImpl.error(`Failed to launch Media Control runtime: ${error.message}`);
+    if (error)
+      consoleImpl.error(
+        `Failed to launch Media Control runtime: ${error.message}`,
+      );
     const finalSignal = signal || requestedSignal;
     if (finalSignal) propagateSignal(finalSignal);
     else processImpl.exitCode = Number.isInteger(code) ? code : 1;
@@ -116,7 +133,10 @@ export function createLauncher({
   const launch = (args = processImpl.argv.slice(2)) => {
     if (launched) throw new Error("Launcher can only be started once");
     launched = true;
-    const { executable, helper, runtimeDirectory } = runtimePaths(baseDirectory, pathImpl);
+    const { executable, helper, runtimeDirectory } = runtimePaths(
+      baseDirectory,
+      pathImpl,
+    );
     try {
       repairRuntimePermissions([executable, helper], fsImpl);
       const pluginRoot = pathImpl.resolve(baseDirectory, "..");

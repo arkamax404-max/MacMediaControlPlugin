@@ -1,0 +1,63 @@
+{
+  "Name": "Media Control for D200",
+  "Description": "Local macOS media display and controls with automatic D200 bridge startup",
+  "Detail": "Media Control for D200 connects the Ulanzi D200 desktop controller to local macOS media status and transport controls. It can show now-playing artwork, title, artist, playback state, track progress, and macOS output volume or mute state on D200 keys and the center display. The plugin starts its local companion bridge from the plugin package and is intended for macOS 13 or later with Ulanzi Deck 2.1.4 or later.",
+  "Actions": [
+    {
+      "Name": "Now Playing",
+      "Tooltip": "Show artwork, playback state, title, artist, and optional 7 px progress"
+    },
+    {
+      "Name": "Large Now Playing",
+      "Tooltip": "Show artwork, title, artist, playback state, and progress on the center display"
+    },
+    {
+      "Name": "Artwork Top Left",
+      "Tooltip": "Show the top-left artwork quarter and optionally run a media or system-audio action"
+    },
+    {
+      "Name": "Artwork Top Right",
+      "Tooltip": "Show the top-right artwork quarter and optionally run a media or system-audio action"
+    },
+    {
+      "Name": "Artwork Bottom Left",
+      "Tooltip": "Show the bottom-left artwork quarter and optionally run a media or system-audio action"
+    },
+    {
+      "Name": "Artwork Bottom Right",
+      "Tooltip": "Show the bottom-right artwork quarter and optionally run a media or system-audio action"
+    },
+    {
+      "Name": "Previous",
+      "Tooltip": "Control the previous item in current media"
+    },
+    {
+      "Name": "Play/Pause",
+      "Tooltip": "Toggle current media playback"
+    },
+    {
+      "Name": "Next",
+      "Tooltip": "Control the next item in current media"
+    },
+    {
+      "Name": "Volume Up",
+      "Tooltip": "Increase macOS output volume by 5%"
+    },
+    {
+      "Name": "Volume Down",
+      "Tooltip": "Decrease macOS output volume by 5%"
+    },
+    {
+      "Name": "Mute Toggle",
+      "Tooltip": "Toggle macOS output mute"
+    },
+    {
+      "Name": "Track Progress",
+      "Tooltip": "Show circular track progress and remaining time"
+    },
+    {
+      "Name": "Setup Large Display",
+      "Tooltip": "Safely install, repair, or restore the center large display"
+    }
+  ]
+}

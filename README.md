@@ -5,7 +5,7 @@ Media Control for D200 brings current-media information and controls from a Mac 
 ## At a glance
 
 | Area | Included behavior |
-|---|---|
+| --- | --- |
 | Now Playing | Artwork, title, artist, playback state, and optional progress |
 | Media controls | Previous, Play/Pause, and Next |
 | System audio | macOS output volume and mute |
@@ -78,7 +78,7 @@ The bridge stores its token at `~/Library/Application Support/GSMTCD200Controlle
 ## Actions
 
 | Action | Behavior |
-|---|---|
+| --- | --- |
 | Now Playing | Shows current artwork, title, artist, playback badge, and optional 7 px bottom progress bar; press to toggle playback. |
 | Previous / Play-Pause / Next | Sends the corresponding generic current-media transport command. |
 | Volume Up / Volume Down | Changes the macOS system output volume by 5 percentage points. |
